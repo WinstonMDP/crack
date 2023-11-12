@@ -1,14 +1,6 @@
 # Crack
 
-## Команды
-
-1. update.
-2. clean - удаляет пакеты, не указанные в конфиге.
-
-## Будет прикольно
-
-1. search \<какой-то шаблон\>.
-2. new \<package name\> - как в cargo.
+## Требования
 
 ``` toml
 name = "package_name"
@@ -29,9 +21,16 @@ commit = "7d92fc64ae4c23213fd06f0464a72de45887b0ba"
 4. В коде библиотека (модуль) квалифицируется по name.
 5. crack.toml, crack.lock.
 6. Клонированные репозитории пакетов располагаются в targets/dependencies.
+7. update.
+8. clean - удаляет пакеты, не указанные в конфиге.
 
 ## Задачи
 
 1. Реализовать клонирование rolling_dependencies.
 2. Реализовать клонирование commit_dependencies.
 3. Сделать crack.lock.
+
+## Будет прикольно
+
+1. search \<какой-то шаблон\>.
+2. new \<package name\> - как в cargo.
