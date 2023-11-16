@@ -26,9 +26,7 @@ commit = "7d92fc64ae4c23213fd06f0464a72de45887b0ba"
 
 ## Задачи
 
-1. Реализовать клонирование rolling_dependencies.
-2. Реализовать клонирование commit_dependencies.
-3. Сделать crack.lock.
+1. Сделать crack.lock.
 
 ## Будет прикольно
 
