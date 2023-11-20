@@ -2,9 +2,9 @@ use clap::Parser;
 
 fn main() {
     let cli = crack::Cli::parse();
-    match cli.command {
-        crack::Commands::Install => println!("Install"),
-        crack::Commands::Update => println!("Update"),
-        crack::Commands::Clean => println!("Clean"),
+    match cli.subcommand {
+        crack::Subcommand::I => crack::install(),
+        crack::Subcommand::U => crack::update(),
+        crack::Subcommand::C => crack::clean(),
     };
 }

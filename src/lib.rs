@@ -8,25 +8,35 @@ use std::{fs, process::Command};
 #[derive(clap::Parser)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub subcommand: Subcommand,
 }
 
 #[derive(clap::Subcommand)]
-pub enum Commands {
-    Install,
-    Update,
-    Clean,
+pub enum Subcommand {
+    /// Install crak.toml dependencies, that are not in the crack.lock
+    I,
+    /// Update crack.lock dependencies
+    U,
+    /// Delete directories, that are not in the crack.toml
+    C,
 }
 
-const DEPENDENCIES_PATH: &str = "tests/dependencies/";
+const DEPENDENCIES_PATH: &str = "target/dependencies/";
 
 #[derive(Deserialize, Serialize, Debug)]
-pub struct Config {
+pub struct Cfg {
     pub name: String,
     pub dependencies: Dependencies,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+impl Cfg {
+    fn new() -> Self {
+        toml::from_str(&fs::read_to_string("crack.toml").expect("crack.toml should exist"))
+            .expect("crack.toml should be valid for deserialisation")
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, Default)]
 pub struct Dependencies {
     pub rolling: Vec<String>,
     pub commit: Vec<CommitDependency>,
@@ -42,64 +52,63 @@ pub struct CommitDependency {
 /// Clone commit dependencies in ``<repository_name>.commit`` directories and
 /// checkout to the respective commits. Clone only those repositories,
 /// that are not in the lock file.
-pub fn install(config_dependencies: &Dependencies, locked_dependencies: &Dependencies) {
-    for config_rolling_dependency in &config_dependencies.rolling {
-        if !locked_dependencies
-            .rolling
-            .contains(config_rolling_dependency)
-        {
+pub fn install() {
+    let cfg = Cfg::new();
+    let locked_dependencies = locked_dependencies();
+    for cfg_rolling_dependency in &cfg.dependencies.rolling {
+        if !locked_dependencies.rolling.contains(cfg_rolling_dependency) {
             let _ = Command::new("git")
                 .current_dir(DEPENDENCIES_PATH)
                 .arg("clone")
-                .arg(config_rolling_dependency)
-                .arg(repository_name(config_rolling_dependency).to_string() + ".rolling")
+                .arg(cfg_rolling_dependency)
+                .arg(repository_name(cfg_rolling_dependency).to_string() + ".rolling")
                 .output();
         }
     }
-    for config_commit_dependency in &config_dependencies.commit {
-        if !locked_dependencies
-            .commit
-            .contains(config_commit_dependency)
-        {
-            let dir = repository_name(&config_commit_dependency.repository).to_string() + ".commit";
+    for cfg_commit_dependency in &cfg.dependencies.commit {
+        if !locked_dependencies.commit.contains(cfg_commit_dependency) {
+            let dir = repository_name(&cfg_commit_dependency.repository).to_string()
+                + "."
+                + &cfg_commit_dependency.commit
+                + ".commit";
             let _ = Command::new("git")
                 .current_dir(DEPENDENCIES_PATH)
                 .arg("clone")
-                .arg(&config_commit_dependency.repository)
+                .arg(&cfg_commit_dependency.repository)
                 .arg(&dir)
                 .output();
             let _ = Command::new("git")
                 .current_dir(DEPENDENCIES_PATH.to_string() + &dir)
                 .arg("checkout")
-                .arg(&config_commit_dependency.commit)
+                .arg(&cfg_commit_dependency.commit)
                 .output();
         }
     }
-    lock(config_dependencies);
+    lock(&cfg.dependencies);
 }
 
 /// Rolling dependencies are only updated.
-pub fn update(locked_rolling_dependencies: &[&str]) {
-    for dependency in locked_rolling_dependencies {
+pub fn update() {
+    let locked_dependencies = locked_dependencies();
+    for dependency in locked_dependencies.rolling {
         let _ = Command::new("git")
-            .current_dir(DEPENDENCIES_PATH.to_string() + repository_name(dependency) + ".rolling")
+            .current_dir(DEPENDENCIES_PATH.to_string() + repository_name(&dependency) + ".rolling")
             .arg("pull")
             .output();
     }
 }
 
-/// Delete directories, that are not in config file.
-///
-/// # Panics
-///
-/// Impossible
-pub fn clean(config_dependencies: &Dependencies) {
-    let repository_names: Vec<&String> = config_dependencies
+/// Delete directories, that are not in cfg file.
+#[allow(clippy::missing_panics_doc)]
+pub fn clean() {
+    let cfg = Cfg::new();
+    let repository_names: Vec<&String> = cfg
+        .dependencies
         .rolling
         .iter()
-        .chain(config_dependencies.commit.iter().map(|x| &x.repository))
+        .chain(cfg.dependencies.commit.iter().map(|x| &x.repository))
         .collect();
-    for file in fs::read_dir(DEPENDENCIES_PATH).expect("The directory for project should exist") {
+    for file in fs::read_dir(DEPENDENCIES_PATH).expect("the directory for project should exist") {
         let dir_name = file.unwrap().file_name().to_str().unwrap().to_string();
         if !repository_names
             .iter()
@@ -120,22 +129,26 @@ fn repository_name(git_url: &str) -> &str {
         .expect(r"'/(\w*)\.git' should be right to extract a repository name")
         .as_str()
 }
+// '-' character must be included to valid
 
 fn lock(dependencies: &Dependencies) {
     let _ = fs::write(
-        DEPENDENCIES_PATH.to_string() + "crack.lock",
+        "crack.lock",
         toml::to_string(dependencies).expect("fs::write should fall only in very weird situations"),
     );
 }
 
+fn locked_dependencies() -> Dependencies {
+    toml::from_str(&fs::read_to_string("crack.lock").unwrap_or_default()) // to fix
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn repository_name_t_1() {
         assert_eq!(
-            repository_name("https://github.com/WinstonMDP/repo_name.git"),
+            super::repository_name("https://github.com/WinstonMDP/repo_name.git"),
             "repo_name"
         );
     }
@@ -143,7 +156,7 @@ mod tests {
     #[test]
     fn repository_name_t_2() {
         assert_eq!(
-            repository_name("ssh://[user@]host.xz[:port]/~[user]/path/to/repo.git/"),
+            super::repository_name("ssh://[user@]host.xz[:port]/~[user]/path/to/repo.git/"),
             "repo"
         );
     }
