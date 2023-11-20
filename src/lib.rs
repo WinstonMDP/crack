@@ -5,6 +5,19 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::{fs, process::Command};
 
+#[derive(clap::Parser)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(clap::Subcommand)]
+pub enum Commands {
+    Install,
+    Update,
+    Clean,
+}
+
 const DEPENDENCIES_PATH: &str = "tests/dependencies/";
 
 #[derive(Deserialize, Serialize, Debug)]
