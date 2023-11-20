@@ -1,5 +1,3 @@
-#![warn(clippy::pedantic)]
-
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -23,6 +21,7 @@ pub enum Subcommand {
 
 const DEPENDENCIES_PATH: &str = "target/dependencies/";
 
+/// ``crack.toml``
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Cfg {
     pub name: String,
@@ -31,6 +30,7 @@ pub struct Cfg {
 
 impl Cfg {
     fn new() -> Self {
+        // TODO: must be Result
         toml::from_str(&fs::read_to_string("crack.toml").expect("crack.toml should exist"))
             .expect("crack.toml should be valid for deserialisation")
     }
@@ -53,34 +53,36 @@ pub struct CommitDependency {
 /// checkout to the respective commits. Clone only those repositories,
 /// that are not in the lock file.
 pub fn install() {
+    // TODO: must be Result
+    // TODO: must create target/dependencies
     let cfg = Cfg::new();
     let locked_dependencies = locked_dependencies();
-    for cfg_rolling_dependency in &cfg.dependencies.rolling {
-        if !locked_dependencies.rolling.contains(cfg_rolling_dependency) {
+    for dependency in &cfg.dependencies.rolling {
+        if !locked_dependencies.rolling.contains(dependency) {
             let _ = Command::new("git")
                 .current_dir(DEPENDENCIES_PATH)
                 .arg("clone")
-                .arg(cfg_rolling_dependency)
-                .arg(repository_name(cfg_rolling_dependency).to_string() + ".rolling")
+                .arg(dependency)
+                .arg(repository_name(dependency).to_string() + ".rolling")
                 .output();
         }
     }
-    for cfg_commit_dependency in &cfg.dependencies.commit {
-        if !locked_dependencies.commit.contains(cfg_commit_dependency) {
-            let dir = repository_name(&cfg_commit_dependency.repository).to_string()
+    for dependency in &cfg.dependencies.commit {
+        if !locked_dependencies.commit.contains(dependency) {
+            let dir = repository_name(&dependency.repository).to_string()
                 + "."
-                + &cfg_commit_dependency.commit
+                + &dependency.commit
                 + ".commit";
             let _ = Command::new("git")
                 .current_dir(DEPENDENCIES_PATH)
                 .arg("clone")
-                .arg(&cfg_commit_dependency.repository)
+                .arg(&dependency.repository)
                 .arg(&dir)
                 .output();
             let _ = Command::new("git")
                 .current_dir(DEPENDENCIES_PATH.to_string() + &dir)
                 .arg("checkout")
-                .arg(&cfg_commit_dependency.commit)
+                .arg(&dependency.commit)
                 .output();
         }
     }
@@ -89,6 +91,7 @@ pub fn install() {
 
 /// Rolling dependencies are only updated.
 pub fn update() {
+    // TODO: must be Result
     let locked_dependencies = locked_dependencies();
     for dependency in locked_dependencies.rolling {
         let _ = Command::new("git")
@@ -98,23 +101,25 @@ pub fn update() {
     }
 }
 
-/// Delete directories, that are not in cfg file.
+/// Delete directories, that are not in crack.toml.
 #[allow(clippy::missing_panics_doc)]
 pub fn clean() {
+    // TODO: must be Result
     let cfg = Cfg::new();
-    let repository_names: Vec<&String> = cfg
-        .dependencies
-        .rolling
-        .iter()
-        .chain(cfg.dependencies.commit.iter().map(|x| &x.repository))
-        .collect();
     for file in fs::read_dir(DEPENDENCIES_PATH).expect("the directory for project should exist") {
-        let dir_name = file.unwrap().file_name().to_str().unwrap().to_string();
-        if !repository_names
+        let dir_name = file.unwrap().file_name().to_str().unwrap().to_string(); // TODO: fix those calls
+        if !cfg
+            .dependencies
+            .rolling
             .iter()
             .any(|x| Regex::new(repository_name(x)).unwrap().is_match(&dir_name))
+            && !cfg.dependencies.commit.iter().any(|x| {
+                Regex::new(&(repository_name(&x.repository).to_string() + "." + &x.commit))
+                    .unwrap()
+                    .is_match(&dir_name)
+            })
         {
-            let _ = fs::remove_dir_all(dir_name);
+            let _ = fs::remove_dir_all(DEPENDENCIES_PATH.to_string() + &dir_name);
         }
     }
 }
@@ -129,7 +134,6 @@ fn repository_name(git_url: &str) -> &str {
         .expect(r"'/(\w*)\.git' should be right to extract a repository name")
         .as_str()
 }
-// '-' character must be included to valid
 
 fn lock(dependencies: &Dependencies) {
     let _ = fs::write(
@@ -139,8 +143,11 @@ fn lock(dependencies: &Dependencies) {
 }
 
 fn locked_dependencies() -> Dependencies {
-    toml::from_str(&fs::read_to_string("crack.lock").unwrap_or_default()) // to fix
-        .unwrap_or_default()
+    if !std::path::Path::new("crack.lock").exists() {
+        return Dependencies::default();
+    }
+    toml::from_str(&fs::read_to_string("crack.lock").expect("crack.lock should exist"))
+        .expect("crack.lock should be valid for deserialisation")
 }
 
 #[cfg(test)]
@@ -158,6 +165,14 @@ mod tests {
         assert_eq!(
             super::repository_name("ssh://[user@]host.xz[:port]/~[user]/path/to/repo.git/"),
             "repo"
+        );
+    }
+
+    #[test]
+    fn repository_name_t_3() {
+        assert_eq!(
+            super::repository_name("https://github.com/WinstonMDP/repo-name.git"),
+            "repo-name"
         );
     }
 }
