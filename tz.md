@@ -4,30 +4,28 @@
 
 ``` toml
 name = "package_name"
-dependencies.rolling = [
-    "https://github.com/monkeyjunglejuice/matrix-emacs-theme.git",
-    "https://github.com/agda/agda.git"
-]
+
+[[dependencies.rolling]]
+repo = "https://github.com/monkeyjunglejuice/matrix-emacs-theme.git",
+
+[[dependencies.rolling]]
+repo = "https://github.com/agda/agda.git"
+branch = "main"
 
 [[dependencies.commit]]
-repository = "https://github.com/jesseleite/nvim-noirbuddy"
+repo = "https://github.com/jesseleite/nvim-noirbuddy"
 commit = "7d92fc64ae4c23213fd06f0464a72de45887b0ba"
 ```
 
 1. Все пакеты берутся из удалённых репозиториев.
 2. Если указан конкретный коммит, то при update пакет не обновляется,
-   иначе берётся последний коммит из главной ветки.
-3. Конфиг, похожий на cargo.
-4. В коде библиотека (модуль) квалифицируется по name.
-5. crack.toml, crack.lock.
-6. Клонированные репозитории пакетов располагаются в targets/dependencies.
-7. update.
-8. clean - удаляет пакеты, не указанные в crack.toml.
-
-## Задачи
-
-1. Обработать ошибки.
-2. Сделать progress bar.
+   иначе берётся последний коммит из указанной ветки. Если ветка не
+   указана берётся клонируемая ветка (главная).
+3. В коде библиотека (модуль) квалифицируется по name.
+4. crack.toml, crack.lock.
+5. Клонированные репозитории пакетов располагаются в dependencies.
+6. update.
+7. clean - удаляет пакеты, не указанные в crack.lock.
 
 ## Будет прикольно
 

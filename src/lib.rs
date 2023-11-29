@@ -1,7 +1,15 @@
+// TODO: error handling
+// TODO: progress bar
+// TODO: more efficient git calls
+
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
-use std::{fs, process::Command};
+use std::{
+    fmt::Debug,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 #[derive(clap::Parser)]
 pub struct Cli {
@@ -19,160 +27,336 @@ pub enum Subcommand {
     C,
 }
 
-const DEPENDENCIES_PATH: &str = "target/dependencies/";
-
 /// ``crack.toml``
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Cfg {
     pub name: String,
+    #[serde(default)]
     pub dependencies: Dependencies,
 }
 
 impl Cfg {
-    fn new() -> Self {
+    fn new(cfg_dir: &Path) -> Self {
         // TODO: must be Result
-        toml::from_str(&fs::read_to_string("crack.toml").expect("crack.toml should exist"))
-            .expect("crack.toml should be valid for deserialisation")
+        toml::from_str(
+            &fs::read_to_string(cfg_dir.join("crack.toml")).expect("crack.toml should exist"),
+        )
+        .expect("crack.toml should be valid for deserialisation")
     }
 }
 
 #[derive(Deserialize, Serialize, Debug, Default)]
 pub struct Dependencies {
-    pub rolling: Vec<String>,
+    #[serde(default)]
+    pub rolling: Vec<RollingDependency>,
+    #[serde(default)]
     pub commit: Vec<CommitDependency>,
+}
+
+impl Dependencies {
+    fn append(&mut self, mut other: Self) {
+        self.rolling.append(&mut other.rolling);
+        self.commit.append(&mut other.commit);
+    }
+}
+
+#[derive(Deserialize, Serialize, Debug, PartialEq)]
+pub struct RollingDependency {
+    pub repo: String,
+    pub branch: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 pub struct CommitDependency {
-    pub repository: String,
+    pub repo: String,
     pub commit: String,
 }
 
-/// Clone rolling dependencies in ``<repository_name>.rolling`` directories.
-/// Clone commit dependencies in ``<repository_name>.commit`` directories and
-/// checkout to the respective commits. Clone only those repositories,
-/// that are not in the lock file.
-pub fn install() {
+/// Clone rolling dependencies in ``<repo_name>.<branch>.rolling`` directories
+/// and checkout to the respective branch.
+/// Clone commit dependencies in ``<repo_name>.<commit>.commit`` directories and
+/// checkout to the respective commits.
+/// Clone only those repositories, that are not in the directory.
+#[must_use]
+pub fn install(cfg_dir: &Path, dependencies_dir: &Path) -> Dependencies {
     // TODO: must be Result
-    // TODO: must create target/dependencies
-    let cfg = Cfg::new();
-    let locked_dependencies = locked_dependencies();
+    let cfg = Cfg::new(cfg_dir);
+    let mut dependencies_to_lock = Dependencies::default();
     for dependency in &cfg.dependencies.rolling {
-        if !locked_dependencies.rolling.contains(dependency) {
-            let _ = Command::new("git")
-                .current_dir(DEPENDENCIES_PATH)
+        let dir = rolling_dependency_dir(dependency);
+        if !Path::new(&dir).exists() {
+            let mut command = Command::new("git");
+            let mut command = command
+                .current_dir(dependencies_dir)
                 .arg("clone")
-                .arg(dependency)
-                .arg(repository_name(dependency).to_string() + ".rolling")
-                .output();
+                .arg(&dependency.repo);
+            if let Some(branch) = dependency.branch.clone() {
+                command = command.arg("-b").arg(branch);
+            }
+            let _ = command.arg(&dir).output();
+            dependencies_to_lock.append(install(&dependencies_dir.join(&dir), dependencies_dir));
         }
     }
     for dependency in &cfg.dependencies.commit {
-        if !locked_dependencies.commit.contains(dependency) {
-            let dir = repository_name(&dependency.repository).to_string()
-                + "."
-                + &dependency.commit
-                + ".commit";
+        let dir_name =
+            repo_name(&dependency.repo).to_string() + "." + &dependency.commit + ".commit";
+        if !Path::new(&dir_name).exists() {
             let _ = Command::new("git")
-                .current_dir(DEPENDENCIES_PATH)
+                .current_dir(dependencies_dir)
                 .arg("clone")
-                .arg(&dependency.repository)
-                .arg(&dir)
+                .arg(&dependency.repo)
+                .arg(&dir_name)
                 .output();
+            let dir = dependencies_dir.join(&dir_name);
             let _ = Command::new("git")
-                .current_dir(DEPENDENCIES_PATH.to_string() + &dir)
+                .current_dir(&dir)
                 .arg("checkout")
                 .arg(&dependency.commit)
                 .output();
+            dependencies_to_lock.append(install(&dir, dependencies_dir));
         }
     }
-    lock(&cfg.dependencies);
+    dependencies_to_lock
 }
 
 /// Rolling dependencies are only updated.
-pub fn update() {
+pub fn update(locked_dependencies: &Dependencies, dependencies_dir: &Path) {
     // TODO: must be Result
-    let locked_dependencies = locked_dependencies();
-    for dependency in locked_dependencies.rolling {
+    for dependency in &locked_dependencies.rolling {
         let _ = Command::new("git")
-            .current_dir(DEPENDENCIES_PATH.to_string() + repository_name(&dependency) + ".rolling")
+            .current_dir(dependencies_dir.join(rolling_dependency_dir(dependency)))
             .arg("pull")
             .output();
     }
 }
 
 /// Delete directories, that are not in crack.toml.
-#[allow(clippy::missing_panics_doc)]
-pub fn clean() {
+pub fn clean(locked_dependencies: &Dependencies, dependencies_dir: &Path) {
     // TODO: must be Result
-    let cfg = Cfg::new();
-    for file in fs::read_dir(DEPENDENCIES_PATH).expect("the directory for project should exist") {
+    for file in fs::read_dir(dependencies_dir).expect("the directory for project should exist") {
         let dir_name = file.unwrap().file_name().to_str().unwrap().to_string(); // TODO: fix those calls
-        if !cfg
-            .dependencies
+        if !locked_dependencies
             .rolling
             .iter()
-            .any(|x| Regex::new(repository_name(x)).unwrap().is_match(&dir_name))
-            && !cfg.dependencies.commit.iter().any(|x| {
-                Regex::new(&(repository_name(&x.repository).to_string() + "." + &x.commit))
+            .any(|x| Regex::new(repo_name(&x.repo)).unwrap().is_match(&dir_name))
+            && !locked_dependencies.commit.iter().any(|x| {
+                Regex::new(&(repo_name(&x.repo).to_string() + "." + &x.commit))
                     .unwrap()
                     .is_match(&dir_name)
             })
         {
-            let _ = fs::remove_dir_all(DEPENDENCIES_PATH.to_string() + &dir_name);
+            let _ = fs::remove_dir_all(dependencies_dir.join(&dir_name));
         }
     }
 }
 
+fn rolling_dependency_dir(dependency: &RollingDependency) -> String {
+    repo_name(&dependency.repo).to_string()
+        + "."
+        + &dependency.branch.clone().unwrap_or("default".to_string())
+        + ".rolling"
+}
+
 /// ``git_url`` must consist ``.git`` part
-fn repository_name(git_url: &str) -> &str {
-    Regex::new(r"/(\w*)\.git")
-        .expect(r"'/(\w*)\.git' should be valid")
+fn repo_name(git_url: &str) -> &str {
+    Regex::new(r"/([^/]*)\.git")
+        .expect("the regex should be valid")
         .captures(git_url)
-        .expect(r"'/(\w*)\.git' should be right to extract a repository name")
+        .expect("the regex should be right to extract a repository name")
         .get(1)
-        .expect(r"'/(\w*)\.git' should be right to extract a repository name")
+        .expect("the regex should be right to extract a repository name")
         .as_str()
 }
 
-fn lock(dependencies: &Dependencies) {
-    let _ = fs::write(
-        "crack.lock",
-        toml::to_string(dependencies).expect("fs::write should fall only in very weird situations"),
-    );
-}
-
-fn locked_dependencies() -> Dependencies {
-    if !std::path::Path::new("crack.lock").exists() {
-        return Dependencies::default();
+#[must_use]
+pub fn project_root() -> Option<PathBuf> {
+    let current_dir = std::env::current_dir().unwrap();
+    for i in current_dir.ancestors() {
+        if i.join("crack.toml").exists() {
+            return Some(i.to_path_buf());
+        }
     }
-    toml::from_str(&fs::read_to_string("crack.lock").expect("crack.lock should exist"))
-        .expect("crack.lock should be valid for deserialisation")
+    None
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::Path};
+
     #[test]
-    fn repository_name_t_1() {
+    fn repo_name_t_1() {
         assert_eq!(
-            super::repository_name("https://github.com/WinstonMDP/repo_name.git"),
+            super::repo_name("https://github.com/WinstonMDP/repo_name.git"),
             "repo_name"
         );
     }
 
     #[test]
-    fn repository_name_t_2() {
+    fn repo_name_t_2() {
         assert_eq!(
-            super::repository_name("ssh://[user@]host.xz[:port]/~[user]/path/to/repo.git/"),
+            super::repo_name("ssh://[user@]host.xz[:port]/~[user]/path/to/repo.git/"),
             "repo"
         );
     }
 
     #[test]
-    fn repository_name_t_3() {
+    fn repo_name_t_3() {
         assert_eq!(
-            super::repository_name("https://github.com/WinstonMDP/repo-name.git"),
+            super::repo_name("https://github.com/WinstonMDP/repo-name.git"),
             "repo-name"
         );
+    }
+
+    fn nfiles(dir: &Path) -> usize {
+        dir.read_dir().unwrap().collect::<Vec<_>>().len()
+    }
+
+    #[test]
+    fn install_t_1() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp_dir.path().join("crack.toml"),
+            r#"
+            name = "package_name"
+
+            [[dependencies.rolling]]
+            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+            "#,
+        )
+        .unwrap();
+        let dependencies_dir = tmp_dir.path().join("dependencies");
+        fs::create_dir(&dependencies_dir).unwrap();
+        let _ = super::install(tmp_dir.path(), &dependencies_dir);
+        assert!(std::path::Path::exists(
+            &dependencies_dir.join("githubOtherFiles.default.rolling")
+        ));
+        assert_eq!(nfiles(&dependencies_dir), 1);
+    }
+
+    #[test]
+    fn install_t_2() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp_dir.path().join("crack.toml"),
+            r#"
+            name = "package_name"
+
+            [[dependencies.rolling]]
+            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+            branch = "main"
+            "#,
+        )
+        .unwrap();
+        let dependencies_dir = tmp_dir.path().join("dependencies");
+        fs::create_dir(&dependencies_dir).unwrap();
+        let _ = super::install(tmp_dir.path(), &dependencies_dir);
+        assert!(Path::exists(
+            &dependencies_dir.join("githubOtherFiles.main.rolling")
+        ));
+        assert_eq!(nfiles(&dependencies_dir), 1);
+    }
+
+    #[test]
+    fn install_t_3() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp_dir.path().join("crack.toml"),
+            r#"
+            name = "package_name"
+
+            [[dependencies.rolling]]
+            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+
+            [[dependencies.rolling]]
+            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+            branch = "b"
+            "#,
+        )
+        .unwrap();
+        let dependencies_dir = tmp_dir.path().join("dependencies");
+        fs::create_dir(&dependencies_dir).unwrap();
+        let _ = super::install(tmp_dir.path(), &dependencies_dir);
+        assert!(Path::exists(
+            &dependencies_dir.join("githubOtherFiles.default.rolling")
+        ));
+        assert!(Path::exists(
+            &dependencies_dir.join("githubOtherFiles.b.rolling")
+        ));
+        assert_eq!(nfiles(&dependencies_dir), 2);
+    }
+
+    #[test]
+    fn install_t_4() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp_dir.path().join("crack.toml"),
+            r#"
+            name = "package_name"
+
+            [[dependencies.rolling]]
+            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+            branch = "with_dependencies"
+            "#,
+        )
+        .unwrap();
+        let dependencies_dir = tmp_dir.path().join("dependencies");
+        fs::create_dir(&dependencies_dir).unwrap();
+        let _ = super::install(tmp_dir.path(), &dependencies_dir);
+        assert!(Path::exists(
+            &dependencies_dir.join("githubOtherFiles.with_dependencies.rolling")
+        ));
+        assert!(Path::exists(
+            &dependencies_dir.join("githubOtherFiles.default.rolling")
+        ));
+        assert_eq!(nfiles(&dependencies_dir), 2);
+    }
+
+    #[test]
+    fn install_t_5() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp_dir.path().join("crack.toml"),
+            r#"
+            name = "package_name"
+
+            [[dependencies.commit]]
+            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+            commit = "909896f5646b7fd9f058dcd21961b8d5599dec3b"
+            "#,
+        )
+        .unwrap();
+        let dependencies_dir = tmp_dir.path().join("dependencies");
+        fs::create_dir(&dependencies_dir).unwrap();
+        let _ = super::install(tmp_dir.path(), &dependencies_dir);
+        assert!(Path::exists(&dependencies_dir.join(
+            "githubOtherFiles.909896f5646b7fd9f058dcd21961b8d5599dec3b.commit"
+        )));
+        assert_eq!(nfiles(&dependencies_dir), 1);
+    }
+
+    #[test]
+    fn install_t_6() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp_dir.path().join("crack.toml"),
+            r#"
+            name = "package_name"
+
+            [[dependencies.commit]]
+            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+            commit = "a4bf57c513ebc8ed89cc546e8c120c9321357632"
+            "#,
+        )
+        .unwrap();
+        let dependencies_dir = tmp_dir.path().join("dependencies");
+        fs::create_dir(&dependencies_dir).unwrap();
+        let _ = super::install(tmp_dir.path(), &dependencies_dir);
+        assert!(Path::exists(&dependencies_dir.join(
+            "githubOtherFiles.a4bf57c513ebc8ed89cc546e8c120c9321357632.commit"
+        )));
+        assert!(Path::exists(
+            &dependencies_dir.join("githubOtherFiles.default.rolling")
+        ));
+        assert_eq!(nfiles(&dependencies_dir), 2);
     }
 }

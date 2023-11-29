@@ -11,3 +11,6 @@ toml = "0.8.8"
 
 [lints.clippy]
 pedantic = "warn"
+
+[dev-dependencies]
+tempfile = "3.8.1"
