@@ -1,5 +1,3 @@
-// TODO: documentate pub entities
-// TODO: progress bar
 // TODO: more efficient git calls
 
 use anyhow::Context;
@@ -73,11 +71,11 @@ pub struct CommitDependency {
     pub commit: String,
 }
 
-/// Clone rolling dependencies in ``<repo_name>.<branch>.rolling`` directories
-/// and checkout to the respective branch.
+/// Clone rolling dependencies in ``<repo_name>.<branch>.rolling`` directories and
+/// checkout to the respective branch.
 /// Clone commit dependencies in ``<repo_name>.<commit>.commit`` directories and
 /// checkout to the respective commits.
-/// Clone only those repositories, that are not in the directory.
+/// Clone only those repositories, that are not in ``dependencies_dir``.
 /// Returns all dependencies, that must be contained in ``dependencies_dir``
 /// according to cfg and its transitive dependencies.
 pub fn install(cfg_dir: &Path, dependencies_dir: &Path) -> anyhow::Result<Dependencies> {
@@ -100,7 +98,8 @@ pub fn install(cfg_dir: &Path, dependencies_dir: &Path) -> anyhow::Result<Depend
             if let Some(branch) = dependency.branch.clone() {
                 command = command.arg("-b").arg(branch);
             }
-            let _ = command.arg(&dir_name).output();
+            command.arg(&dir_name).output()?;
+            println!("{dependency:?} was installed");
             dependencies_to_lock.append_and_sort_and_dedup(install(&dir_path, dependencies_dir)?);
         }
     }
@@ -108,17 +107,18 @@ pub fn install(cfg_dir: &Path, dependencies_dir: &Path) -> anyhow::Result<Depend
         let dir_name = commit_dependency_dir(dependency);
         let dir_path = dependencies_dir.join(&dir_name);
         if !Path::new(&dir_path).exists() {
-            let _ = Command::new("git")
+            Command::new("git")
                 .current_dir(dependencies_dir)
                 .arg("clone")
                 .arg(&dependency.repo)
                 .arg(&dir_name)
-                .output();
-            let _ = Command::new("git")
+                .output()?;
+            Command::new("git")
                 .current_dir(&dir_path)
                 .arg("checkout")
                 .arg(&dependency.commit)
-                .output();
+                .output()?;
+            println!("{dependency:?} was installed");
             dependencies_to_lock.append_and_sort_and_dedup(install(&dir_path, dependencies_dir)?);
         }
     }
@@ -126,19 +126,10 @@ pub fn install(cfg_dir: &Path, dependencies_dir: &Path) -> anyhow::Result<Depend
     Ok(dependencies_to_lock)
 }
 
-/// Delete directories, that are not in ``LOCK_FILE_NAME`` file.
-///
-/// # Panics
-///
-/// 1. ``dependencies_dir`` directory should exist and ``dependencies_dir`` should be valid.
-/// 2. Dependencies directories should be valid.
+/// Delete dependencies directories, that are not in ``LOCK_FILE_NAME`` file.
 pub fn clean(locked_dependencies: &Dependencies, dependencies_dir: &Path) -> anyhow::Result<()> {
-    for file in
-        fs::read_dir(dependencies_dir).expect("the directory for project should exist and be valid")
-    {
-        let dir = file
-            .expect("dependencies directories should be valid")
-            .file_name();
+    for file in fs::read_dir(dependencies_dir)? {
+        let dir = file?.file_name();
         if !locked_dependencies
             .rolling
             .iter()
@@ -182,6 +173,7 @@ fn repo_name(git_url: &str) -> &str {
         .as_str()
 }
 
+/// Path of the first ancestor directory (or current directory) containing ``CFG_FILE_NAME`` file.
 pub fn project_root() -> anyhow::Result<PathBuf> {
     let current_dir = std::env::current_dir()?;
     for i in current_dir.ancestors() {
@@ -189,9 +181,10 @@ pub fn project_root() -> anyhow::Result<PathBuf> {
             return Ok(i.to_path_buf());
         }
     }
-    anyhow::bail!("Can't find {LOCK_FILE_NAME} in the ancestors directories")
+    anyhow::bail!("Can't find {CFG_FILE_NAME} in the current and ancestor directories")
 }
 
+/// Content of ``LOCK_FILE_NAME`` file.
 pub fn locked_dependencies(lock_file_dir: &Path) -> anyhow::Result<Dependencies> {
     let lock_file = lock_file_dir.join(LOCK_FILE_NAME);
     if lock_file.exists() {
@@ -199,27 +192,26 @@ pub fn locked_dependencies(lock_file_dir: &Path) -> anyhow::Result<Dependencies>
             &fs::read_to_string(&lock_file)
                 .with_context(|| format!("Failed with file {lock_file:#?}"))?,
         )
-        .with_context(|| "Failed with file: {lock_file:#?}")?)
+        .with_context(|| format!("Failed with file: {lock_file:#?}"))?)
     } else {
         Ok(Dependencies::default())
     }
 }
 
+/// Write dependencies to ``LOCK_FILE_NAME`` file.
 pub fn lock(lock_dir: &Path, dependencies: &Dependencies) -> anyhow::Result<()> {
     let lock_file = lock_dir.join(LOCK_FILE_NAME);
-    let _ = fs::write(
+    fs::write(
         &lock_file,
         toml::to_string(dependencies)
             .with_context(|| format!("Failed with lock file {lock_file:#?}"))?,
-    );
+    )?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
-
-    use crate::CFG_FILE_NAME;
 
     #[test]
     fn repo_name_t_1() {
@@ -253,7 +245,7 @@ mod tests {
     fn install_t_1() {
         let tmp_dir = tempfile::tempdir().unwrap();
         fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
+            tmp_dir.path().join(super::CFG_FILE_NAME),
             r#"
             name = "package_name"
 
@@ -284,7 +276,7 @@ mod tests {
     fn install_t_2() {
         let tmp_dir = tempfile::tempdir().unwrap();
         fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
+            tmp_dir.path().join(super::CFG_FILE_NAME),
             r#"
             name = "package_name"
 
@@ -316,7 +308,7 @@ mod tests {
     fn install_t_3() {
         let tmp_dir = tempfile::tempdir().unwrap();
         fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
+            tmp_dir.path().join(super::CFG_FILE_NAME),
             r#"
             name = "package_name"
 
@@ -360,7 +352,7 @@ mod tests {
     fn install_t_4() {
         let tmp_dir = tempfile::tempdir().unwrap();
         fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
+            tmp_dir.path().join(super::CFG_FILE_NAME),
             r#"
             name = "package_name"
 
@@ -401,7 +393,7 @@ mod tests {
     fn install_t_5() {
         let tmp_dir = tempfile::tempdir().unwrap();
         fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
+            tmp_dir.path().join(super::CFG_FILE_NAME),
             r#"
             name = "package_name"
 
@@ -433,7 +425,7 @@ mod tests {
     fn install_t_6() {
         let tmp_dir = tempfile::tempdir().unwrap();
         fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
+            tmp_dir.path().join(super::CFG_FILE_NAME),
             r#"
             name = "package_name"
 
@@ -471,7 +463,7 @@ mod tests {
     fn install_t_7() {
         let tmp_dir = tempfile::tempdir().unwrap();
         fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
+            tmp_dir.path().join(super::CFG_FILE_NAME),
             r#"
             name = "package_name"
 
@@ -500,7 +492,7 @@ mod tests {
         ));
         assert_eq!(nfiles(&dependencies_dir), 1);
         fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
+            tmp_dir.path().join(super::CFG_FILE_NAME),
             r#"
             name = "package_name"
 
@@ -533,7 +525,7 @@ mod tests {
     fn install_t_8() {
         let tmp_dir = tempfile::tempdir().unwrap();
         fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
+            tmp_dir.path().join(super::CFG_FILE_NAME),
             r#"
             name = "package_name"
 
@@ -577,7 +569,7 @@ mod tests {
     #[test]
     fn clean_t_1() {
         let tmp_dir = tempfile::tempdir().unwrap();
-        let cfg = tmp_dir.path().join(CFG_FILE_NAME);
+        let cfg = tmp_dir.path().join(super::CFG_FILE_NAME);
         fs::write(
             &cfg,
             r#"
@@ -621,7 +613,7 @@ mod tests {
     #[test]
     fn clean_t_2() {
         let tmp_dir = tempfile::tempdir().unwrap();
-        let cfg = tmp_dir.path().join(CFG_FILE_NAME);
+        let cfg = tmp_dir.path().join(super::CFG_FILE_NAME);
         fs::write(
             &cfg,
             r#"
