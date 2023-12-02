@@ -3,14 +3,17 @@ name = "crack"
 version = "0.1.0"
 edition = "2021"
 
+[lints.clippy]
+pedantic = "warn"
+missing_errors_doc = "allow"
+
 [dependencies]
+anyhow = "1.0.75"
 clap = { version = "4.4.8", features = ["derive"] }
 regex = "1.10.2"
 serde = { version = "1.0.192", features = ["derive"] }
+thiserror = "1.0.50"
 toml = "0.8.8"
-
-[lints.clippy]
-pedantic = "warn"
 
 [dev-dependencies]
 tempfile = "3.8.1"
