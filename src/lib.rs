@@ -11,6 +11,7 @@ use std::{
 };
 
 #[derive(clap::Parser)]
+#[command(about = "Sanskrit package manager", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub subcommand: Subcommand,

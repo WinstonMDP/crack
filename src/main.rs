@@ -2,9 +2,10 @@ use clap::Parser;
 use std::fs;
 
 fn main() -> anyhow::Result<()> {
+    let cli = crack::Cli::parse();
     let project_root = crack::project_root()?;
     let dependencies_dir = project_root.join("dependencies");
-    match crack::Cli::parse().subcommand {
+    match cli.subcommand {
         crack::Subcommand::I => {
             if !dependencies_dir.exists() {
                 fs::create_dir_all(&dependencies_dir).unwrap();
