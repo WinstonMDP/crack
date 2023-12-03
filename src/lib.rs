@@ -130,7 +130,9 @@ pub fn install(cfg_dir: &Path, dependencies_dir: &Path) -> anyhow::Result<Depend
 /// Delete dependencies directories, that are not in ``LOCK_FILE_NAME`` file.
 pub fn clean(locked_dependencies: &Dependencies, dependencies_dir: &Path) -> anyhow::Result<()> {
     for file in fs::read_dir(dependencies_dir)? {
-        let dir = file?.file_name();
+        let dir = file
+            .with_context(|| format!("Failed with dependencies directory {dependencies_dir:#?}"))?
+            .file_name();
         if !locked_dependencies
             .rolling
             .iter()
@@ -140,7 +142,8 @@ pub fn clean(locked_dependencies: &Dependencies, dependencies_dir: &Path) -> any
                 .iter()
                 .any(|x| commit_dependency_dir(x) == dir)
         {
-            fs::remove_dir_all(dependencies_dir.join(&dir))?;
+            fs::remove_dir_all(dependencies_dir.join(&dir))
+                .with_context(|| format!("Failed with directory {dir:#?}"))?;
         }
     }
     Ok(())
@@ -193,7 +196,7 @@ pub fn locked_dependencies(lock_file_dir: &Path) -> anyhow::Result<Dependencies>
             &fs::read_to_string(&lock_file)
                 .with_context(|| format!("Failed with file {lock_file:#?}"))?,
         )
-        .with_context(|| format!("Failed with file: {lock_file:#?}"))?)
+        .with_context(|| format!("Failed with file {lock_file:#?}"))?)
     } else {
         Ok(Dependencies::default())
     }
