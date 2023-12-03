@@ -194,9 +194,9 @@ pub fn locked_dependencies(lock_file_dir: &Path) -> anyhow::Result<Dependencies>
     if lock_file.exists() {
         Ok(toml::from_str(
             &fs::read_to_string(&lock_file)
-                .with_context(|| format!("Failed with file {lock_file:#?}"))?,
+                .with_context(|| format!("Failed with lock file {lock_file:#?}"))?,
         )
-        .with_context(|| format!("Failed with file {lock_file:#?}"))?)
+        .with_context(|| format!("Failed with lock file {lock_file:#?}"))?)
     } else {
         Ok(Dependencies::default())
     }
