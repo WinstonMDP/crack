@@ -1,6 +1,6 @@
 // TODO: more efficient git calls
 
-use anyhow::Context;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsString,
@@ -79,7 +79,7 @@ pub struct CommitDependency {
 /// Clone only those repositories, that are not in ``dependencies_dir``.
 /// Returns all dependencies, that must be contained in ``dependencies_dir``
 /// according to cfg and its transitive dependencies.
-pub fn install(cfg_dir: &Path, dependencies_dir: &Path) -> anyhow::Result<Dependencies> {
+pub fn install(cfg_dir: &Path, dependencies_dir: &Path) -> Result<Dependencies> {
     let cfg_path = cfg_dir.join(CFG_FILE_NAME);
     let cfg: Cfg = toml::from_str(
         &fs::read_to_string(&cfg_path)
@@ -128,7 +128,7 @@ pub fn install(cfg_dir: &Path, dependencies_dir: &Path) -> anyhow::Result<Depend
 }
 
 /// Delete dependencies directories, that are not in ``LOCK_FILE_NAME`` file.
-pub fn clean(locked_dependencies: &Dependencies, dependencies_dir: &Path) -> anyhow::Result<()> {
+pub fn clean(locked_dependencies: &Dependencies, dependencies_dir: &Path) -> Result<()> {
     for file in fs::read_dir(dependencies_dir)? {
         let dir = file
             .with_context(|| format!("Failed with dependencies directory {dependencies_dir:#?}"))?
@@ -178,7 +178,7 @@ fn repo_name(git_url: &str) -> &str {
 }
 
 /// Path of the first ancestor directory (or current directory) containing ``CFG_FILE_NAME`` file.
-pub fn project_root() -> anyhow::Result<PathBuf> {
+pub fn project_root() -> Result<PathBuf> {
     let current_dir = std::env::current_dir()?;
     for i in current_dir.ancestors() {
         if i.join(CFG_FILE_NAME).exists() {
@@ -189,7 +189,7 @@ pub fn project_root() -> anyhow::Result<PathBuf> {
 }
 
 /// Content of ``LOCK_FILE_NAME`` file.
-pub fn locked_dependencies(lock_file_dir: &Path) -> anyhow::Result<Dependencies> {
+pub fn locked_dependencies(lock_file_dir: &Path) -> Result<Dependencies> {
     let lock_file = lock_file_dir.join(LOCK_FILE_NAME);
     if lock_file.exists() {
         Ok(toml::from_str(
@@ -203,7 +203,7 @@ pub fn locked_dependencies(lock_file_dir: &Path) -> anyhow::Result<Dependencies>
 }
 
 /// Write dependencies to ``LOCK_FILE_NAME`` file.
-pub fn lock(lock_dir: &Path, dependencies: &Dependencies) -> anyhow::Result<()> {
+pub fn lock(lock_dir: &Path, dependencies: &Dependencies) -> Result<()> {
     let lock_file = lock_dir.join(LOCK_FILE_NAME);
     fs::write(
         &lock_file,
