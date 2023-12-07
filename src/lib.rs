@@ -1,3 +1,4 @@
+// TODO: test buffers in tests
 // TODO: more efficient git calls
 
 use anyhow::{Context, Result};
@@ -79,7 +80,11 @@ pub struct CommitDependency {
 /// Clone only those repositories, that are not in ``dependencies_dir``.
 /// Returns all dependencies, that must be contained in ``dependencies_dir``
 /// according to cfg and its transitive dependencies.
-pub fn install(cfg_dir: &Path, dependencies_dir: &Path) -> Result<Dependencies> {
+pub fn install<T: std::io::Write>(
+    cfg_dir: &Path,
+    dependencies_dir: &Path,
+    buffer: &mut T,
+) -> Result<Dependencies> {
     let cfg_path = cfg_dir.join(CFG_FILE_NAME);
     let cfg: Cfg = toml::from_str(
         &fs::read_to_string(&cfg_path)
@@ -100,8 +105,12 @@ pub fn install(cfg_dir: &Path, dependencies_dir: &Path) -> Result<Dependencies> 
                 command = command.arg("-b").arg(branch);
             }
             command.arg(&dir_name).output()?;
-            println!("{dependency:?} was installed");
-            dependencies_to_lock.append_and_sort_and_dedup(install(&dir_path, dependencies_dir)?);
+            writeln!(buffer, "{dependency:?} was installed")?;
+            dependencies_to_lock.append_and_sort_and_dedup(install(
+                &dir_path,
+                dependencies_dir,
+                buffer,
+            )?);
         }
     }
     for dependency in &cfg.dependencies.commit {
@@ -119,8 +128,12 @@ pub fn install(cfg_dir: &Path, dependencies_dir: &Path) -> Result<Dependencies> 
                 .arg("checkout")
                 .arg(&dependency.commit)
                 .output()?;
-            println!("{dependency:?} was installed");
-            dependencies_to_lock.append_and_sort_and_dedup(install(&dir_path, dependencies_dir)?);
+            writeln!(buffer, "{dependency:?} was installed")?;
+            dependencies_to_lock.append_and_sort_and_dedup(install(
+                &dir_path,
+                dependencies_dir,
+                buffer,
+            )?);
         }
     }
     dependencies_to_lock.append_and_sort_and_dedup(cfg.dependencies);
@@ -128,7 +141,11 @@ pub fn install(cfg_dir: &Path, dependencies_dir: &Path) -> Result<Dependencies> 
 }
 
 /// Delete dependencies directories, that are not in ``LOCK_FILE_NAME`` file.
-pub fn clean(locked_dependencies: &Dependencies, dependencies_dir: &Path) -> Result<()> {
+pub fn clean<T: std::io::Write>(
+    locked_dependencies: &Dependencies,
+    dependencies_dir: &Path,
+    buffer: &mut T,
+) -> Result<()> {
     for file in fs::read_dir(dependencies_dir)? {
         let dir = file
             .with_context(|| format!("Failed with dependencies directory {dependencies_dir:#?}"))?
@@ -144,6 +161,7 @@ pub fn clean(locked_dependencies: &Dependencies, dependencies_dir: &Path) -> Res
         {
             fs::remove_dir_all(dependencies_dir.join(&dir))
                 .with_context(|| format!("Failed with directory {dir:#?}"))?;
+            writeln!(buffer, "{dir:#?} was deleted")?;
         }
     }
     Ok(())
@@ -215,7 +233,7 @@ pub fn lock(lock_dir: &Path, dependencies: &Dependencies) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::Path};
+    use std::{fs, io::empty, path::Path};
 
     #[test]
     fn repo_name_t_1() {
@@ -261,7 +279,7 @@ mod tests {
         let dependencies_dir = tmp_dir.path().join("dependencies");
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
-            super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
             super::Dependencies {
                 rolling: vec![super::RollingDependency {
                     repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -293,7 +311,7 @@ mod tests {
         let dependencies_dir = tmp_dir.path().join("dependencies");
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
-            super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
             super::Dependencies {
                 rolling: vec![super::RollingDependency {
                     repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -328,7 +346,7 @@ mod tests {
         let dependencies_dir = tmp_dir.path().join("dependencies");
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
-            super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
             super::Dependencies {
                 rolling: vec![
                     super::RollingDependency {
@@ -369,7 +387,7 @@ mod tests {
         let dependencies_dir = tmp_dir.path().join("dependencies");
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
-            super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
             super::Dependencies {
                 rolling: vec![
                     super::RollingDependency {
@@ -410,7 +428,7 @@ mod tests {
         let dependencies_dir = tmp_dir.path().join("dependencies");
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
-            super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
             super::Dependencies {
                 rolling: vec![],
                 commit: vec![super::CommitDependency {
@@ -442,7 +460,7 @@ mod tests {
         let dependencies_dir = tmp_dir.path().join("dependencies");
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
-            super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
             super::Dependencies {
                 rolling: vec![super::RollingDependency {
                     repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -479,7 +497,7 @@ mod tests {
         let dependencies_dir = tmp_dir.path().join("dependencies");
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
-            super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
             super::Dependencies {
                 rolling: vec![super::RollingDependency {
                     repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -507,7 +525,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
             super::Dependencies {
                 rolling: vec![super::RollingDependency {
                     repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -541,7 +559,7 @@ mod tests {
         let dependencies_dir = tmp_dir.path().join("dependencies");
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
-            super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
             super::Dependencies {
                 rolling: vec![super::RollingDependency {
                     repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -555,7 +573,7 @@ mod tests {
         ));
         assert_eq!(nfiles(&dependencies_dir), 1);
         assert_eq!(
-            super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
             super::Dependencies {
                 rolling: vec![super::RollingDependency {
                     repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -588,7 +606,7 @@ mod tests {
         fs::create_dir(&dependencies_dir).unwrap();
         super::lock(
             tmp_dir.path(),
-            &super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            &super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
         )
         .unwrap();
         fs::write(
@@ -600,12 +618,13 @@ mod tests {
         .unwrap();
         super::lock(
             tmp_dir.path(),
-            &super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            &super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
         )
         .unwrap();
         super::clean(
             &super::locked_dependencies(tmp_dir.path()).unwrap(),
             &dependencies_dir,
+            &mut empty(),
         )
         .unwrap();
         assert!(!Path::exists(
@@ -636,7 +655,7 @@ mod tests {
         fs::create_dir(&dependencies_dir).unwrap();
         super::lock(
             tmp_dir.path(),
-            &super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            &super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
         )
         .unwrap();
         assert!(Path::exists(
@@ -654,12 +673,13 @@ mod tests {
         .unwrap();
         super::lock(
             tmp_dir.path(),
-            &super::install(tmp_dir.path(), &dependencies_dir).unwrap(),
+            &super::install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
         )
         .unwrap();
         super::clean(
             &super::locked_dependencies(tmp_dir.path()).unwrap(),
             &dependencies_dir,
+            &mut empty(),
         )
         .unwrap();
         assert!(Path::exists(
