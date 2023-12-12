@@ -19,12 +19,12 @@ fn main() -> anyhow::Result<()> {
         crack::Subcommand::U => {
             let locked_dependencies = crack::locked_dependencies(&project_root)?;
             for dependency in &locked_dependencies.rolling {
-                let dir = dependencies_dir.join(crack::rolling_dependency_dir(dependency));
+                let dir = dependencies_dir.join(crack::rolling_dependency_dir(dependency)?);
                 std::process::Command::new("git")
                     .current_dir(&dir)
                     .arg("pull")
                     .output()
-                    .with_context(|| format!("Failed with directory {dir:#?}"))?;
+                    .with_context(|| format!("Failed with directory {dir:#?}."))?;
             }
         }
         crack::Subcommand::C => {
@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
                 )?;
             } else {
                 println!(
-                    "There is nothing to clean. {dependencies_dir:#?} directory doesn't exist."
+                    "There is nothing to clean. Directory {dependencies_dir:#?} doesn't exist."
                 );
             }
         }

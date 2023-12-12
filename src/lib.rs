@@ -1,7 +1,6 @@
-// TODO: test buffers in tests
 // TODO: more efficient git calls
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::OsString,
@@ -20,11 +19,11 @@ pub struct Cli {
 
 #[derive(clap::Subcommand)]
 pub enum Subcommand {
-    /// Install crack.toml dependencies, that are not in the directory.
+    /// Install crack.toml dependencies, which are not in the directory.
     I,
     /// Update crack.lock dependencies.
     U,
-    /// Delete directories, that are not in the crack.lock.
+    /// Delete directories, which are not in the crack.lock.
     C,
 }
 
@@ -51,14 +50,6 @@ impl Dependencies {
         self.rolling.append(&mut other.rolling);
         self.commit.append(&mut other.commit);
     }
-
-    fn append_and_sort_and_dedup(&mut self, other: Self) {
-        self.append(other);
-        self.rolling.sort();
-        self.rolling.dedup();
-        self.commit.sort();
-        self.commit.dedup();
-    }
 }
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -77,147 +68,186 @@ pub struct CommitDependency {
 /// checkout to the respective branch.
 /// Clone commit dependencies in ``<repo_name>.<commit>.commit`` directories and
 /// checkout to the respective commits.
-/// Clone only those repositories, that are not in ``dependencies_dir``.
-/// Returns all dependencies, that must be contained in ``dependencies_dir``
+/// Clone only those repositories, which are not in ``dependencies_dir``.
+/// Returns all dependencies, which must be contained in ``dependencies_dir``
 /// according to cfg and its transitive dependencies.
-pub fn install<T: std::io::Write>(
+pub fn install(
     cfg_dir: &Path,
     dependencies_dir: &Path,
-    buffer: &mut T,
+    buffer: &mut impl std::io::Write,
+) -> Result<Dependencies> {
+    let mut dependencies = install_h(cfg_dir, dependencies_dir, buffer)?;
+    dependencies.rolling.sort();
+    dependencies.rolling.dedup();
+    dependencies.commit.sort();
+    dependencies.commit.dedup();
+    Ok(dependencies)
+}
+
+/// Install, but dependencies aren't sorted and deduped.
+fn install_h(
+    cfg_dir: &Path,
+    dependencies_dir: &Path,
+    buffer: &mut impl std::io::Write,
 ) -> Result<Dependencies> {
     let cfg_path = cfg_dir.join(CFG_FILE_NAME);
     let cfg: Cfg = toml::from_str(
         &fs::read_to_string(&cfg_path)
-            .with_context(|| format!("Failed with cfg file {cfg_path:#?}"))?,
+            .with_context(|| format!("Failed with {cfg_path:#?} cfg file."))?,
     )
-    .with_context(|| format!("Failed with cfg file {cfg_path:#?}"))?;
+    .with_context(|| format!("Failed with {cfg_path:#?} cfg file."))?;
     let mut dependencies_to_lock = Dependencies::default();
     for dependency in &cfg.dependencies.rolling {
-        let dir_name = rolling_dependency_dir(dependency);
+        let dir_name = rolling_dependency_dir(dependency)?;
         let dir_path = dependencies_dir.join(&dir_name);
         if !Path::new(&dir_path).exists() {
             let mut command = Command::new("git");
             let mut command = command
                 .current_dir(dependencies_dir)
                 .arg("clone")
+                .arg("-q")
                 .arg(&dependency.repo);
             if let Some(branch) = dependency.branch.clone() {
                 command = command.arg("-b").arg(branch);
             }
-            command.arg(&dir_name).output()?;
+            with_git_context(&command.arg(&dir_name).output()?, &cfg_path, dependency)?;
             writeln!(buffer, "{dependency:?} was installed")?;
-            dependencies_to_lock.append_and_sort_and_dedup(install(
-                &dir_path,
-                dependencies_dir,
-                buffer,
-            )?);
+            dependencies_to_lock.append(install(&dir_path, dependencies_dir, buffer)?);
         }
     }
     for dependency in &cfg.dependencies.commit {
-        let dir_name = commit_dependency_dir(dependency);
+        let dir_name = commit_dependency_dir(dependency)?;
         let dir_path = dependencies_dir.join(&dir_name);
         if !Path::new(&dir_path).exists() {
-            Command::new("git")
-                .current_dir(dependencies_dir)
-                .arg("clone")
-                .arg(&dependency.repo)
-                .arg(&dir_name)
-                .output()?;
-            Command::new("git")
-                .current_dir(&dir_path)
-                .arg("checkout")
-                .arg(&dependency.commit)
-                .output()?;
+            with_git_context(
+                &Command::new("git")
+                    .current_dir(dependencies_dir)
+                    .arg("clone")
+                    .arg("-q")
+                    .arg(&dependency.repo)
+                    .arg(&dir_name)
+                    .output()?,
+                &cfg_path,
+                dependency,
+            )?;
+            with_git_context(
+                &Command::new("git")
+                    .current_dir(&dir_path)
+                    .arg("checkout")
+                    .arg("-q")
+                    .arg(&dependency.commit)
+                    .output()?,
+                &cfg_path,
+                dependency,
+            )?;
             writeln!(buffer, "{dependency:?} was installed")?;
-            dependencies_to_lock.append_and_sort_and_dedup(install(
-                &dir_path,
-                dependencies_dir,
-                buffer,
-            )?);
+            dependencies_to_lock.append(install(&dir_path, dependencies_dir, buffer)?);
         }
     }
-    dependencies_to_lock.append_and_sort_and_dedup(cfg.dependencies);
+    dependencies_to_lock.append(cfg.dependencies);
     Ok(dependencies_to_lock)
 }
 
-/// Delete dependencies directories, that are not in ``LOCK_FILE_NAME`` file.
-pub fn clean<T: std::io::Write>(
+trait Dependency {}
+impl Dependency for RollingDependency {}
+impl Dependency for CommitDependency {}
+
+fn with_git_context(
+    output: &std::process::Output,
+    cfg: &Path,
+    dependency: &(impl Dependency + Debug),
+) -> Result<()> {
+    with_stderr(output).with_context(|| format!("Failed with {cfg:?} cfg file {dependency:?}."))?;
+    Ok(())
+}
+
+fn with_stderr(output: &std::process::Output) -> Result<()> {
+    if !output.stderr.is_empty() {
+        anyhow::bail!("{}", std::str::from_utf8(&output.stderr)?.to_string())
+    }
+    Ok(())
+}
+
+/// Delete dependencies directories, which are not in ``LOCK_FILE_NAME`` file.
+pub fn clean(
     locked_dependencies: &Dependencies,
     dependencies_dir: &Path,
-    buffer: &mut T,
+    buffer: &mut impl std::io::Write,
 ) -> Result<()> {
     for file in fs::read_dir(dependencies_dir)? {
         let dir = file
-            .with_context(|| format!("Failed with dependencies directory {dependencies_dir:#?}"))?
+            .with_context(|| format!("Failed with {dependencies_dir:#?} dependencies directory."))?
             .file_name();
         if !locked_dependencies
             .rolling
             .iter()
-            .any(|x| rolling_dependency_dir(x) == dir)
+            .any(|x| rolling_dependency_dir(x).map_or(false, |x_dir| x_dir == dir))
             && !locked_dependencies
                 .commit
                 .iter()
-                .any(|x| commit_dependency_dir(x) == dir)
+                .any(|x| commit_dependency_dir(x).map_or(false, |x_dir| x_dir == dir))
         {
             fs::remove_dir_all(dependencies_dir.join(&dir))
-                .with_context(|| format!("Failed with directory {dir:#?}"))?;
+                .with_context(|| format!("Failed with {dir:#?} directory."))?;
             writeln!(buffer, "{dir:#?} was deleted")?;
         }
     }
     Ok(())
 }
 
-#[must_use]
-pub fn rolling_dependency_dir(dependency: &RollingDependency) -> OsString {
-    let mut dir = OsString::from(repo_name(&dependency.repo));
+pub fn rolling_dependency_dir(dependency: &RollingDependency) -> Result<OsString> {
+    let mut dir = OsString::from(repo_name(&dependency.repo)?);
     dir.push(".");
     dir.push(&dependency.branch.clone().unwrap_or("default".to_string()));
     dir.push(".rolling");
-    dir
+    Ok(dir)
 }
 
-fn commit_dependency_dir(dependency: &CommitDependency) -> OsString {
-    let mut dir = OsString::from(repo_name(&dependency.repo));
+fn commit_dependency_dir(dependency: &CommitDependency) -> Result<OsString> {
+    let mut dir = OsString::from(repo_name(&dependency.repo)?);
     dir.push(".");
     dir.push(&dependency.commit);
     dir.push(".commit");
-    dir
+    Ok(dir)
 }
 
-/// ``git_url`` must consist ``.git`` part
-fn repo_name(git_url: &str) -> &str {
-    regex::Regex::new(r"/([^/]*)\.git")
-        .expect("the regex should be valid")
+fn repo_name(git_url: &str) -> Result<&str> {
+    Ok(regex::Regex::new(r"/([^/]*)\.git")?
         .captures(git_url)
-        .expect("the regex should be right to extract a repository name")
+        .ok_or_else(|| {
+            anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.")
+        })?
         .get(1)
-        .expect("the regex should be right to extract a repository name")
-        .as_str()
+        .ok_or_else(|| {
+            anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.")
+        })?
+        .as_str())
 }
 
 /// Path of the first ancestor directory (or current directory) containing ``CFG_FILE_NAME`` file.
 pub fn project_root() -> Result<PathBuf> {
     let current_dir = std::env::current_dir()?;
-    for i in current_dir.ancestors() {
-        if i.join(CFG_FILE_NAME).exists() {
-            return Ok(i.to_path_buf());
-        }
-    }
-    anyhow::bail!("Can't find {CFG_FILE_NAME} in the current and ancestor directories")
+    current_dir
+        .ancestors()
+        .find(|x| x.join(CFG_FILE_NAME).exists())
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            anyhow!("Can't find {CFG_FILE_NAME} in the current and ancestor directories.")
+        })
 }
 
 /// Content of ``LOCK_FILE_NAME`` file.
 pub fn locked_dependencies(lock_file_dir: &Path) -> Result<Dependencies> {
     let lock_file = lock_file_dir.join(LOCK_FILE_NAME);
-    if lock_file.exists() {
-        Ok(toml::from_str(
+    Ok(if lock_file.exists() {
+        toml::from_str(
             &fs::read_to_string(&lock_file)
-                .with_context(|| format!("Failed with lock file {lock_file:#?}"))?,
+                .with_context(|| format!("Failed with {lock_file:#?} lock file."))?,
         )
-        .with_context(|| format!("Failed with lock file {lock_file:#?}"))?)
+        .with_context(|| format!("Failed with {lock_file:#?} lock file."))?
     } else {
-        Ok(Dependencies::default())
-    }
+        Dependencies::default()
+    })
 }
 
 /// Write dependencies to ``LOCK_FILE_NAME`` file.
@@ -226,7 +256,7 @@ pub fn lock(lock_dir: &Path, dependencies: &Dependencies) -> Result<()> {
     fs::write(
         &lock_file,
         toml::to_string(dependencies)
-            .with_context(|| format!("Failed with lock file {lock_file:#?}"))?,
+            .with_context(|| format!("Failed with {lock_file:#?} lock file."))?,
     )?;
     Ok(())
 }
@@ -238,7 +268,7 @@ mod tests {
     #[test]
     fn repo_name_t_1() {
         assert_eq!(
-            super::repo_name("https://github.com/WinstonMDP/repo_name.git"),
+            super::repo_name("https://github.com/WinstonMDP/repo_name.git").unwrap(),
             "repo_name"
         );
     }
@@ -246,7 +276,7 @@ mod tests {
     #[test]
     fn repo_name_t_2() {
         assert_eq!(
-            super::repo_name("ssh://[user@]host.xz[:port]/~[user]/path/to/repo.git/"),
+            super::repo_name("ssh://[user@]host.xz[:port]/~[user]/path/to/repo.git/").unwrap(),
             "repo"
         );
     }
@@ -254,7 +284,7 @@ mod tests {
     #[test]
     fn repo_name_t_3() {
         assert_eq!(
-            super::repo_name("https://github.com/WinstonMDP/repo-name.git"),
+            super::repo_name("https://github.com/WinstonMDP/repo-name.git").unwrap(),
             "repo-name"
         );
     }
