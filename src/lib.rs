@@ -19,11 +19,11 @@ pub struct Cli {
 
 #[derive(clap::Subcommand)]
 pub enum Subcommand {
-    /// Install crack.toml dependencies, which are not in the directory.
+    /// Install crack.toml dependencies, which aren't in the directory.
     I,
     /// Update crack.lock dependencies.
     U,
-    /// Delete directories, which are not in the crack.lock.
+    /// Delete directories, which aren't in the crack.lock.
     C,
 }
 
@@ -68,7 +68,7 @@ pub struct CommitDependency {
 /// checkout to the respective branch.
 /// Clone commit dependencies in ``<repo_name>.<commit>.commit`` directories and
 /// checkout to the respective commits.
-/// Clone only those repositories, which are not in ``dependencies_dir``.
+/// Clone only those repositories, which aren't in ``dependencies_dir``.
 /// Returns all dependencies, which must be contained in ``dependencies_dir``
 /// according to cfg and its transitive dependencies.
 pub fn install(
@@ -110,7 +110,7 @@ fn install_h(
             if let Some(branch) = dependency.branch.clone() {
                 command = command.arg("-b").arg(branch);
             }
-            with_git_context(&command.arg(&dir_name).output()?, &cfg_path, dependency)?;
+            with_stderr_and_context(&command.arg(&dir_name).output()?, &cfg_path, dependency)?;
             writeln!(buffer, "{dependency:?} was installed")?;
             dependencies_to_lock.append(install(&dir_path, dependencies_dir, buffer)?);
         }
@@ -119,7 +119,7 @@ fn install_h(
         let dir_name = commit_dependency_dir(dependency)?;
         let dir_path = dependencies_dir.join(&dir_name);
         if !Path::new(&dir_path).exists() {
-            with_git_context(
+            with_stderr_and_context(
                 &Command::new("git")
                     .current_dir(dependencies_dir)
                     .arg("clone")
@@ -130,7 +130,7 @@ fn install_h(
                 &cfg_path,
                 dependency,
             )?;
-            with_git_context(
+            with_stderr_and_context(
                 &Command::new("git")
                     .current_dir(&dir_path)
                     .arg("checkout")
@@ -152,40 +152,40 @@ trait Dependency {}
 impl Dependency for RollingDependency {}
 impl Dependency for CommitDependency {}
 
-fn with_git_context(
+fn with_stderr_and_context(
     output: &std::process::Output,
     cfg: &Path,
     dependency: &(impl Dependency + Debug),
 ) -> Result<()> {
-    with_stderr(output).with_context(|| format!("Failed with {cfg:?} cfg file {dependency:?}."))?;
-    Ok(())
-}
-
-fn with_stderr(output: &std::process::Output) -> Result<()> {
     if !output.stderr.is_empty() {
-        anyhow::bail!("{}", std::str::from_utf8(&output.stderr)?.to_string())
+        return Err(anyhow!(std::str::from_utf8(&output.stderr)?.to_string()))
+            .with_context(|| format!("Failed with {cfg:?} cfg file, {dependency:?}."));
     }
     Ok(())
 }
 
-/// Delete dependencies directories, which are not in ``LOCK_FILE_NAME`` file.
+/// Delete dependencies directories, which aren't in ``LOCK_FILE_NAME`` file.
 pub fn clean(
     locked_dependencies: &Dependencies,
     dependencies_dir: &Path,
     buffer: &mut impl std::io::Write,
 ) -> Result<()> {
+    let rolling_locked_dependencies_dirs = locked_dependencies
+        .rolling
+        .iter()
+        .map(rolling_dependency_dir)
+        .collect::<Result<Vec<OsString>>>()?;
+    let commit_locked_dependencies_dirs = locked_dependencies
+        .commit
+        .iter()
+        .map(commit_dependency_dir)
+        .collect::<Result<Vec<OsString>>>()?;
     for file in fs::read_dir(dependencies_dir)? {
         let dir = file
             .with_context(|| format!("Failed with {dependencies_dir:#?} dependencies directory."))?
             .file_name();
-        if !locked_dependencies
-            .rolling
-            .iter()
-            .any(|x| rolling_dependency_dir(x).map_or(false, |x_dir| x_dir == dir))
-            && !locked_dependencies
-                .commit
-                .iter()
-                .any(|x| commit_dependency_dir(x).map_or(false, |x_dir| x_dir == dir))
+        if !rolling_locked_dependencies_dirs.iter().any(|x| *x == dir)
+            && !commit_locked_dependencies_dirs.iter().any(|x| *x == dir)
         {
             fs::remove_dir_all(dependencies_dir.join(&dir))
                 .with_context(|| format!("Failed with {dir:#?} directory."))?;
