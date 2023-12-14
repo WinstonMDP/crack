@@ -37,7 +37,7 @@ pub struct Cfg {
     pub dependencies: Dependencies,
 }
 
-#[derive(Deserialize, Serialize, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Deserialize, Serialize, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Dependencies {
     #[serde(default)]
     pub rolling: Vec<RollingDependency>,
@@ -52,13 +52,13 @@ impl Dependencies {
     }
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct RollingDependency {
     pub repo: String,
     pub branch: Option<String>,
 }
 
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct CommitDependency {
     pub repo: String,
     pub commit: String,
@@ -164,24 +164,31 @@ fn with_stderr_and_context(
     Ok(())
 }
 
+fn sorted(slice: &[impl Ord + Clone]) -> bool {
+    let mut clone = slice.to_vec();
+    clone.sort();
+    slice == clone
+}
+
 /// Delete dependencies directories, which aren't in ``LOCK_FILE_NAME`` file.
+/// ``locked_dependencies`` must be sorted.
 pub fn clean(
     locked_dependencies: &Dependencies,
     dependencies_dir: &Path,
     buffer: &mut impl std::io::Write,
 ) -> Result<()> {
-    let mut rolling_locked_dependencies_dirs = locked_dependencies
+    debug_assert!(sorted(&locked_dependencies.rolling));
+    debug_assert!(sorted(&locked_dependencies.commit));
+    let rolling_locked_dependencies_dirs = locked_dependencies
         .rolling
         .iter()
         .map(rolling_dependency_dir)
         .collect::<Result<Vec<OsString>>>()?;
-    rolling_locked_dependencies_dirs.sort();
-    let mut commit_locked_dependencies_dirs = locked_dependencies
+    let commit_locked_dependencies_dirs = locked_dependencies
         .commit
         .iter()
         .map(commit_dependency_dir)
         .collect::<Result<Vec<OsString>>>()?;
-    commit_locked_dependencies_dirs.sort();
     for file in fs::read_dir(dependencies_dir)? {
         let dir = file
             .with_context(|| format!("Failed with {dependencies_dir:#?} dependencies directory."))?
