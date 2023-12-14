@@ -170,22 +170,26 @@ pub fn clean(
     dependencies_dir: &Path,
     buffer: &mut impl std::io::Write,
 ) -> Result<()> {
-    let rolling_locked_dependencies_dirs = locked_dependencies
+    let mut rolling_locked_dependencies_dirs = locked_dependencies
         .rolling
         .iter()
         .map(rolling_dependency_dir)
         .collect::<Result<Vec<OsString>>>()?;
-    let commit_locked_dependencies_dirs = locked_dependencies
+    rolling_locked_dependencies_dirs.sort();
+    let mut commit_locked_dependencies_dirs = locked_dependencies
         .commit
         .iter()
         .map(commit_dependency_dir)
         .collect::<Result<Vec<OsString>>>()?;
+    commit_locked_dependencies_dirs.sort();
     for file in fs::read_dir(dependencies_dir)? {
         let dir = file
             .with_context(|| format!("Failed with {dependencies_dir:#?} dependencies directory."))?
             .file_name();
-        if !rolling_locked_dependencies_dirs.iter().any(|x| *x == dir)
-            && !commit_locked_dependencies_dirs.iter().any(|x| *x == dir)
+        if rolling_locked_dependencies_dirs
+            .binary_search(&dir)
+            .is_err()
+            && commit_locked_dependencies_dirs.binary_search(&dir).is_err()
         {
             fs::remove_dir_all(dependencies_dir.join(&dir))
                 .with_context(|| format!("Failed with {dir:#?} directory."))?;
