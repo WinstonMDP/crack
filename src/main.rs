@@ -1,5 +1,6 @@
 use anyhow::Context;
 use clap::Parser;
+use crack::Subcommand;
 use std::fs;
 
 fn main() -> anyhow::Result<()> {
@@ -16,7 +17,7 @@ fn main() -> anyhow::Result<()> {
         })?;
     let dependencies_dir = project_root.join("dependencies");
     match cli.subcommand {
-        crack::Subcommand::I => {
+        Subcommand::I => {
             if !dependencies_dir.exists() {
                 fs::create_dir_all(&dependencies_dir).unwrap();
             }
@@ -25,7 +26,7 @@ fn main() -> anyhow::Result<()> {
                 &crack::install(&project_root, &dependencies_dir, &mut std::io::stdout())?,
             )?;
         }
-        crack::Subcommand::U => {
+        Subcommand::U => {
             let locked_dependencies = crack::locked_dependencies(&project_root)?;
             for dependency in &locked_dependencies.rolling {
                 let dir = dependencies_dir.join(crack::rolling_dependency_dir(dependency)?);
@@ -40,7 +41,7 @@ fn main() -> anyhow::Result<()> {
                 .with_context(|| format!("Failed with {dir:#?} directory."))?;
             }
         }
-        crack::Subcommand::C => {
+        Subcommand::C => {
             if dependencies_dir.exists() {
                 let locked_dependencies = crack::locked_dependencies(&project_root)?;
                 fs::create_dir_all(&dependencies_dir).unwrap();
