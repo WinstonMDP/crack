@@ -24,6 +24,7 @@ fn main() -> anyhow::Result<()> {
                     &std::process::Command::new("git")
                         .current_dir(&dir)
                         .arg("pull")
+                        .arg("-q")
                         .arg("--depth=1")
                         .output()?,
                 )
