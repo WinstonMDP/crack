@@ -519,9 +519,17 @@ mod tests {
                 }]
             }
         );
-        assert!(Path::exists(&dependencies_dir.join(
-            "githubOtherFiles.a4bf57c513ebc8ed89cc546e8c120c9321357632.commit"
-        )));
+        let commit_dependency_dir = dependencies_dir
+            .join("githubOtherFiles.a4bf57c513ebc8ed89cc546e8c120c9321357632.commit");
+        assert!(Path::exists(&commit_dependency_dir));
+        assert_eq!(
+            fs::read_to_string(commit_dependency_dir.join(super::CFG_FILE_NAME)).unwrap(),
+            r#"name = "otherFiles"
+
+[[dependencies.rolling]]
+repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+"#
+        );
         assert!(Path::exists(
             &dependencies_dir.join("githubOtherFiles.default.rolling")
         ));
