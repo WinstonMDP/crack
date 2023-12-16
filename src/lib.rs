@@ -182,27 +182,19 @@ pub fn with_sterr(output: &std::process::Output) -> Result<()> {
     Ok(())
 }
 
-fn sorted(slice: &[impl Ord + Clone]) -> bool {
-    let mut clone = slice.to_vec();
-    clone.sort();
-    slice == clone
-}
-
 /// Delete dependencies directories, which aren't in ``LOCK_FILE_NAME`` file.
-/// ``locked_dependencies`` must be sorted.
 pub fn clean(
     locked_dependencies: &Dependencies,
     dependencies_dir: &Path,
     buffer: &mut impl std::io::Write,
 ) -> Result<()> {
-    debug_assert!(sorted(&locked_dependencies.rolling));
-    debug_assert!(sorted(&locked_dependencies.commit));
-    let locked_dependency_dirs = locked_dependencies
+    let mut locked_dependency_dirs = locked_dependencies
         .rolling
         .iter()
         .map(rolling_dependency_dir)
         .chain(locked_dependencies.commit.iter().map(commit_dependency_dir))
         .collect::<Result<Vec<OsString>>>()?;
+    locked_dependency_dirs.sort_unstable();
     for file in fs::read_dir(dependencies_dir)? {
         let dir = file
             .with_context(|| format!("Failed with {dependencies_dir:#?} dependencies directory."))?
