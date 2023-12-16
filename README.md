@@ -1,8 +1,8 @@
 # Crack
 
-Specify dependencies in ``crack.toml``.
-``crack.toml`` must be in the project root.
-Example:
+Specify dependencies in ``crack.toml``. ``crack.toml`` must be in the project root.
+
+``crack.toml`` example:
 
 ```toml
 name = "package_name"
@@ -21,8 +21,12 @@ repo = "git_repository_url"
 commit = "sha"
 ```
 
-Install ``crack.toml`` dependencies, which aren't in the directory.
-It produces ``crack.lock``.
+All dependencies are stored in ``project_root/dependencies`` directory.
+
+## Commands
+
+Install ``crack.toml`` dependencies, which aren't in dependencies directory.
+It produces ``crack.lock`` and dependencies directory, if it doesn't exist.
 
 ```zsh
 crack i
@@ -34,7 +38,7 @@ Update ``crack.lock`` dependencies.
 crack u
 ```
 
-Delete directories, which aren't in the ``crack.lock``.
+Delete directories, which aren't in ``crack.lock``.
 
 ```zsh
 crack c
