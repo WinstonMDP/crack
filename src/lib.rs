@@ -77,9 +77,9 @@ pub fn install(
     buffer: &mut impl std::io::Write,
 ) -> Result<Dependencies> {
     let mut dependencies = install_h(cfg_dir, dependencies_dir, buffer)?;
-    dependencies.rolling.sort();
+    dependencies.rolling.sort_unstable();
     dependencies.rolling.dedup();
-    dependencies.commit.sort();
+    dependencies.commit.sort_unstable();
     dependencies.commit.dedup();
     Ok(dependencies)
 }
