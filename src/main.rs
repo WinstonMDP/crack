@@ -4,7 +4,16 @@ use std::fs;
 
 fn main() -> anyhow::Result<()> {
     let cli = crack::Cli::parse();
-    let project_root = crack::project_root()?;
+    let project_root = std::env::current_dir()?
+        .ancestors()
+        .find(|x| x.join(crack::CFG_FILE_NAME).exists())
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Can't find {} in the current and ancestor directories.",
+                crack::CFG_FILE_NAME
+            )
+        })?;
     let dependencies_dir = project_root.join("dependencies");
     match cli.subcommand {
         crack::Subcommand::I => {

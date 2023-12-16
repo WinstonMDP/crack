@@ -1,12 +1,6 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::{
-    ffi::OsString,
-    fmt::Debug,
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::{ffi::OsString, fmt::Debug, fs, path::Path, process::Command};
 
 #[derive(clap::Parser)]
 #[command(about = "A Sanskrit package manager", long_about = None)]
@@ -25,7 +19,7 @@ pub enum Subcommand {
     C,
 }
 
-const CFG_FILE_NAME: &str = "crack.toml";
+pub const CFG_FILE_NAME: &str = "crack.toml";
 const LOCK_FILE_NAME: &str = "crack.lock";
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -250,25 +244,13 @@ fn repo_name(git_url: &str) -> Result<&str> {
     Ok(regex::Regex::new(r"/([^/]*)\.git")?
         .captures(git_url)
         .ok_or_else(|| {
-            anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.")
+            anyhow::anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.")
         })?
         .get(1)
         .ok_or_else(|| {
-            anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.")
+            anyhow::anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.")
         })?
         .as_str())
-}
-
-/// Path of the first ancestor directory (or current directory) containing ``CFG_FILE_NAME`` file.
-pub fn project_root() -> Result<PathBuf> {
-    let current_dir = std::env::current_dir()?;
-    current_dir
-        .ancestors()
-        .find(|x| x.join(CFG_FILE_NAME).exists())
-        .map(Path::to_path_buf)
-        .ok_or_else(|| {
-            anyhow!("Can't find {CFG_FILE_NAME} in the current and ancestor directories.")
-        })
 }
 
 /// Content of ``LOCK_FILE_NAME`` file.
