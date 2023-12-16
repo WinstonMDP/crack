@@ -1,5 +1,3 @@
-// TODO: more efficient git calls
-
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -106,6 +104,7 @@ fn install_h(
                 .current_dir(dependencies_dir)
                 .arg("clone")
                 .arg("-q")
+                .arg("--depth=1")
                 .arg(&dependency.repo);
             if let Some(branch) = dependency.branch.clone() {
                 command = command.arg("-b").arg(branch);
@@ -119,13 +118,35 @@ fn install_h(
         let dir_name = commit_dependency_dir(dependency)?;
         let dir_path = dependencies_dir.join(&dir_name);
         if !Path::new(&dir_path).exists() {
+            std::fs::create_dir(&dir_path)?;
             with_stderr_and_context(
                 &Command::new("git")
-                    .current_dir(dependencies_dir)
-                    .arg("clone")
+                    .current_dir(&dir_path)
+                    .arg("init")
                     .arg("-q")
+                    .output()?,
+                &cfg_path,
+                dependency,
+            )?;
+            with_stderr_and_context(
+                &Command::new("git")
+                    .current_dir(&dir_path)
+                    .arg("remote")
+                    .arg("add")
+                    .arg("origin")
                     .arg(&dependency.repo)
-                    .arg(&dir_name)
+                    .output()?,
+                &cfg_path,
+                dependency,
+            )?;
+            with_stderr_and_context(
+                &Command::new("git")
+                    .current_dir(&dir_path)
+                    .arg("fetch")
+                    .arg("-q")
+                    .arg("--depth=1")
+                    .arg("origin")
+                    .arg(&dependency.commit)
                     .output()?,
                 &cfg_path,
                 dependency,
@@ -135,7 +156,7 @@ fn install_h(
                     .current_dir(&dir_path)
                     .arg("checkout")
                     .arg("-q")
-                    .arg(&dependency.commit)
+                    .arg("FETCH_HEAD")
                     .output()?,
                 &cfg_path,
                 dependency,
@@ -157,9 +178,12 @@ fn with_stderr_and_context(
     cfg: &Path,
     dependency: &(impl Dependency + Debug),
 ) -> Result<()> {
+    with_sterr(output).with_context(|| format!("Failed with {cfg:?} cfg file, {dependency:?}."))
+}
+
+pub fn with_sterr(output: &std::process::Output) -> Result<()> {
     if !output.stderr.is_empty() {
-        return Err(anyhow!(std::str::from_utf8(&output.stderr)?.to_string()))
-            .with_context(|| format!("Failed with {cfg:?} cfg file, {dependency:?}."));
+        anyhow::bail!(std::str::from_utf8(&output.stderr)?.to_string())
     }
     Ok(())
 }
