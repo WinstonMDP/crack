@@ -9,15 +9,15 @@ name = "package_name"
 
 [[dependencies.rolling]]
 repo = "git_repo_url"
-# default branch is git default
+# a default branch is git default
 
 [[dependencies.rolling]]
 repo = "git_repo_url"
-branch = "git_rep_branch"
+branch = "git_repo_branch"
 
 
 [[dependencies.commit]]
-repo = "git_repository_url"
+repo = "git_repo_url"
 commit = "sha"
 ```
 
@@ -25,8 +25,8 @@ All dependencies are stored in ``project_root/dependencies`` directory.
 
 ## Commands
 
-Install ``crack.toml`` dependencies, which aren't in dependencies directory.
-It produces ``crack.lock`` and dependencies directory, if it doesn't exist.
+Install ``crack.toml`` dependencies, which aren't in the dependencies directory.
+It produces ``crack.lock`` and a dependencies directory, if it doesn't exist.
 
 ```zsh
 crack i

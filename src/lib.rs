@@ -11,11 +11,11 @@ pub struct Cli {
 
 #[derive(clap::Subcommand)]
 pub enum Subcommand {
-    /// Install crack.toml dependencies, which aren't in the directory.
+    /// Install crack.toml dependencies, which aren't in the dependencies directory.
     I,
     /// Update crack.lock dependencies.
     U,
-    /// Delete directories, which aren't in the crack.lock.
+    /// Delete directories, which aren't in crack.lock.
     C,
 }
 
