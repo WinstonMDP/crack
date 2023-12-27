@@ -100,7 +100,7 @@ fn install_h(
                 .arg("-q")
                 .arg("--depth=1")
                 .arg(&dependency.repo);
-            if let Some(branch) = dependency.branch.clone() {
+            if let Some(branch) = &dependency.branch {
                 command = command.arg("-b").arg(branch);
             }
             with_stderr_and_context(&command.arg(&dir_name).output()?, &cfg_path, dependency)?;
