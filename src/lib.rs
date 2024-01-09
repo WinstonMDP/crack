@@ -2,23 +2,6 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{ffi::OsString, fmt::Debug, fs, path::Path, process::Command};
 
-#[derive(clap::Parser)]
-#[command(about = "A Sanskrit package manager", long_about = None)]
-pub struct Cli {
-    #[command(subcommand)]
-    pub subcommand: Subcommand,
-}
-
-#[derive(clap::Subcommand)]
-pub enum Subcommand {
-    /// Install crack.toml dependencies, which aren't in the dependencies directory.
-    I,
-    /// Update crack.lock dependencies.
-    U,
-    /// Delete directories, which aren't in crack.lock.
-    C,
-}
-
 pub const CFG_FILE_NAME: &str = "crack.toml";
 const LOCK_FILE_NAME: &str = "crack.lock";
 

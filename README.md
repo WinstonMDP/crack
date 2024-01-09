@@ -32,6 +32,12 @@ It produces ``crack.lock`` and a dependencies directory, if it doesn't exist.
 crack i
 ```
 
+Add a rolling dependency to ``crack.toml``, if dependency exists in the repos table.
+
+```zsh
+crack a <a repo name from the repos table>
+```
+
 Update ``crack.lock`` dependencies.
 
 ```zsh
