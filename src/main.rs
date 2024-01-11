@@ -1,6 +1,6 @@
 use anyhow::Context;
 use clap::Parser;
-use std::{collections::HashMap, fs, io::Write};
+use std::fs;
 
 #[derive(clap::Parser)]
 #[command(about = "A Sanskrit package manager", long_about = None)]
@@ -13,8 +13,6 @@ pub struct Cli {
 pub enum Subcommand {
     /// Install crack.toml dependencies, which aren't in the dependencies directory.
     I,
-    ///  Add a rolling dependency to crack.toml, if dependency exists in the repos table.
-    A { dependency: String },
     /// Update crack.lock dependencies.
     U,
     /// Delete directories, which aren't in crack.lock.
@@ -43,35 +41,6 @@ fn main() -> anyhow::Result<()> {
                 &project_root,
                 &crack::install(&project_root, &dependencies_dir, &mut std::io::stdout())?,
             )?;
-        }
-        Subcommand::A { dependency } => {
-            let repos_table: std::collections::HashMap<String, crack::RollingDependency> =
-                toml::from_str(
-                    &fs::read_to_string("repos_table.toml")
-                        .context("Failed with the repos table.")?,
-                )
-                .context("Failed with the repos table.")?;
-            match repos_table.get(&dependency) {
-                Some(dependency) => {
-                    fs::OpenOptions::new()
-                        .append(true)
-                        .open(crack::CFG_FILE_NAME)
-                        .context("Failed with the cfg file.")?
-                        .write_all(
-                            // NOTE: perfomance will be better, if a more cheap-const version of map exists
-                            ("\n".to_string()
-                                + &toml::to_string(&HashMap::from([(
-                                    "dependencies",
-                                    HashMap::from([("rolling", vec![dependency])]),
-                                )]))
-                                .unwrap())
-                                .as_bytes(),
-                        )
-                        .context("Failed with the cfg file.")?;
-                    println!("{dependency:?} was added.");
-                }
-                None => println!("No such dependency in the repos table"),
-            }
         }
         Subcommand::U => {
             let locked_dependencies = crack::locked_dependencies(&project_root)?;
