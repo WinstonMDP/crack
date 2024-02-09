@@ -1,6 +1,6 @@
-use anyhow::Context;
+use anyhow::{Context, Result};
 use clap::Parser;
-use std::fs;
+use std::{fs, path::Path};
 
 #[derive(clap::Parser)]
 #[command(about = "A Sanskrit package manager", long_about = None)]
@@ -19,12 +19,23 @@ pub enum Subcommand {
     C,
 }
 
-fn main() -> anyhow::Result<()> {
+fn install(project_root: &Path, dependencies_dir: &Path) -> Result<()> {
+    if !dependencies_dir.exists() {
+        fs::create_dir_all(dependencies_dir)?;
+    }
+    crack::lock(
+        project_root,
+        &crack::install(project_root, dependencies_dir, &mut std::io::stdout())?,
+    )?;
+    Ok(())
+}
+
+fn main() -> Result<()> {
     let cli = Cli::parse();
     let project_root = std::env::current_dir()?
         .ancestors()
         .find(|x| x.join(crack::CFG_FILE_NAME).exists())
-        .map(std::path::Path::to_path_buf)
+        .map(Path::to_path_buf)
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "Can't find {} in the current and ancestor directories.",
@@ -33,15 +44,7 @@ fn main() -> anyhow::Result<()> {
         })?;
     let dependencies_dir = project_root.join("dependencies");
     match cli.subcommand {
-        Subcommand::I => {
-            if !dependencies_dir.exists() {
-                fs::create_dir_all(&dependencies_dir)?;
-            }
-            crack::lock(
-                &project_root,
-                &crack::install(&project_root, &dependencies_dir, &mut std::io::stdout())?,
-            )?;
-        }
+        Subcommand::I => install(&project_root, &dependencies_dir)?,
         Subcommand::U => {
             let locked_dependencies = crack::locked_dependencies(&project_root)?;
             for dependency in &locked_dependencies {
@@ -58,6 +61,7 @@ fn main() -> anyhow::Result<()> {
                     .with_context(|| format!("Failed with {dir:#?} directory."))?;
                 }
             }
+            install(&project_root, &dependencies_dir)?;
         }
         Subcommand::C => {
             if dependencies_dir.exists() {
