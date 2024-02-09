@@ -1,6 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::{ffi::OsString, fmt::Debug, fs, path::Path, process::Command};
+use std::{collections::HashMap, ffi::OsString, fmt::Debug, fs, path::Path, process::Command};
 
 pub const CFG_FILE_NAME: &str = "crack.toml";
 const LOCK_FILE_NAME: &str = "crack.lock";
@@ -9,34 +9,20 @@ const LOCK_FILE_NAME: &str = "crack.lock";
 pub struct Cfg {
     pub name: String,
     #[serde(default)]
-    pub dependencies: Dependencies,
+    pub dependencies: Vec<Dependency>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct Dependencies {
-    #[serde(default)]
-    pub rolling: Vec<RollingDependency>,
-    #[serde(default)]
-    pub commit: Vec<CommitDependency>,
-}
-
-impl Dependencies {
-    fn append(&mut self, mut other: Self) {
-        self.rolling.append(&mut other.rolling);
-        self.commit.append(&mut other.commit);
-    }
-}
-
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct RollingDependency {
-    pub repo: String,
-    pub branch: Option<String>,
-}
-
-#[derive(Deserialize, Serialize, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct CommitDependency {
-    pub repo: String,
-    pub commit: String,
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Dependency {
+    Commit {
+        repo: String,
+        commit: String,
+    },
+    Rolling {
+        repo: String,
+        branch: Option<String>,
+    },
 }
 
 /// Clone rolling dependencies in ``<repo_name>.<branch>.rolling`` directories and
@@ -50,12 +36,10 @@ pub fn install(
     cfg_dir: &Path,
     dependencies_dir: &Path,
     buffer: &mut impl std::io::Write,
-) -> Result<Dependencies> {
+) -> Result<Vec<Dependency>> {
     let mut dependencies = install_h(cfg_dir, dependencies_dir, buffer)?;
-    dependencies.rolling.sort_unstable();
-    dependencies.rolling.dedup();
-    dependencies.commit.sort_unstable();
-    dependencies.commit.dedup();
+    dependencies.sort_unstable();
+    dependencies.dedup();
     Ok(dependencies)
 }
 
@@ -64,96 +48,96 @@ fn install_h(
     cfg_dir: &Path,
     dependencies_dir: &Path,
     buffer: &mut impl std::io::Write,
-) -> Result<Dependencies> {
+) -> Result<Vec<Dependency>> {
     let cfg_path = cfg_dir.join(CFG_FILE_NAME);
-    let cfg: Cfg = toml::from_str(
+    let mut cfg: Cfg = toml::from_str(
         &fs::read_to_string(&cfg_path)
             .with_context(|| format!("Failed with {cfg_path:#?} cfg file."))?,
     )
     .with_context(|| format!("Failed with {cfg_path:#?} cfg file."))?;
-    let mut dependencies_to_lock = Dependencies::default();
-    for dependency in &cfg.dependencies.rolling {
-        let dir_name = rolling_dependency_dir(dependency)?;
+    let mut dependencies_to_lock = Vec::new();
+    for dependency in &cfg.dependencies {
+        let dir_name = dependency_dir(dependency)?;
         let dir_path = dependencies_dir.join(&dir_name);
         if !Path::new(&dir_path).exists() {
-            let mut command = Command::new("git");
-            let mut command = command
-                .current_dir(dependencies_dir)
-                .arg("clone")
-                .arg("-q")
-                .arg("--depth=1")
-                .arg(&dependency.repo);
-            if let Some(branch) = &dependency.branch {
-                command = command.arg("-b").arg(branch);
+            match dependency {
+                Dependency::Commit { repo, commit } => {
+                    std::fs::create_dir(&dir_path)?;
+                    with_stderr_and_context(
+                        &Command::new("git")
+                            .current_dir(&dir_path)
+                            .arg("init")
+                            .arg("-q")
+                            .output()?,
+                        &cfg_path,
+                        dependency,
+                    )?;
+                    with_stderr_and_context(
+                        &Command::new("git")
+                            .current_dir(&dir_path)
+                            .arg("remote")
+                            .arg("add")
+                            .arg("origin")
+                            .arg(repo)
+                            .output()?,
+                        &cfg_path,
+                        dependency,
+                    )?;
+                    with_stderr_and_context(
+                        &Command::new("git")
+                            .current_dir(&dir_path)
+                            .arg("fetch")
+                            .arg("-q")
+                            .arg("--depth=1")
+                            .arg("origin")
+                            .arg(commit)
+                            .output()?,
+                        &cfg_path,
+                        dependency,
+                    )?;
+                    with_stderr_and_context(
+                        &Command::new("git")
+                            .current_dir(&dir_path)
+                            .arg("checkout")
+                            .arg("-q")
+                            .arg("FETCH_HEAD")
+                            .output()?,
+                        &cfg_path,
+                        dependency,
+                    )?;
+                    writeln!(buffer, "{dependency:?} was installed")?;
+                }
+                Dependency::Rolling { repo, branch } => {
+                    let mut command = Command::new("git");
+                    let mut command = command
+                        .current_dir(dependencies_dir)
+                        .arg("clone")
+                        .arg("-q")
+                        .arg("--depth=1")
+                        .arg(repo);
+                    if let Some(branch) = &branch {
+                        command = command.arg("-b").arg(branch);
+                    }
+                    with_stderr_and_context(
+                        &command.arg(&dir_name).output()?,
+                        &cfg_path,
+                        dependency,
+                    )?;
+                    writeln!(buffer, "{dependency:?} was installed")?;
+                    dependencies_to_lock.append(&mut install(&dir_path, dependencies_dir, buffer)?);
+                }
             }
-            with_stderr_and_context(&command.arg(&dir_name).output()?, &cfg_path, dependency)?;
-            writeln!(buffer, "{dependency:?} was installed")?;
-            dependencies_to_lock.append(install(&dir_path, dependencies_dir, buffer)?);
         }
+        dependencies_to_lock.append(&mut install(&dir_path, dependencies_dir, buffer)?);
     }
-    for dependency in &cfg.dependencies.commit {
-        let dir_name = commit_dependency_dir(dependency)?;
-        let dir_path = dependencies_dir.join(&dir_name);
-        if !Path::new(&dir_path).exists() {
-            std::fs::create_dir(&dir_path)?;
-            with_stderr_and_context(
-                &Command::new("git")
-                    .current_dir(&dir_path)
-                    .arg("init")
-                    .arg("-q")
-                    .output()?,
-                &cfg_path,
-                dependency,
-            )?;
-            with_stderr_and_context(
-                &Command::new("git")
-                    .current_dir(&dir_path)
-                    .arg("remote")
-                    .arg("add")
-                    .arg("origin")
-                    .arg(&dependency.repo)
-                    .output()?,
-                &cfg_path,
-                dependency,
-            )?;
-            with_stderr_and_context(
-                &Command::new("git")
-                    .current_dir(&dir_path)
-                    .arg("fetch")
-                    .arg("-q")
-                    .arg("--depth=1")
-                    .arg("origin")
-                    .arg(&dependency.commit)
-                    .output()?,
-                &cfg_path,
-                dependency,
-            )?;
-            with_stderr_and_context(
-                &Command::new("git")
-                    .current_dir(&dir_path)
-                    .arg("checkout")
-                    .arg("-q")
-                    .arg("FETCH_HEAD")
-                    .output()?,
-                &cfg_path,
-                dependency,
-            )?;
-            writeln!(buffer, "{dependency:?} was installed")?;
-            dependencies_to_lock.append(install(&dir_path, dependencies_dir, buffer)?);
-        }
-    }
-    dependencies_to_lock.append(cfg.dependencies);
+    dependencies_to_lock.append(&mut cfg.dependencies);
     Ok(dependencies_to_lock)
 }
-
-trait Dependency {}
-impl Dependency for RollingDependency {}
-impl Dependency for CommitDependency {}
 
 fn with_stderr_and_context(
     output: &std::process::Output,
     cfg: &Path,
-    dependency: &(impl Dependency + Debug),
+    dependency: &Dependency,
 ) -> Result<()> {
     with_sterr(output).with_context(|| format!("Failed with {cfg:?} cfg file, {dependency:?}."))
 }
@@ -167,15 +151,13 @@ pub fn with_sterr(output: &std::process::Output) -> Result<()> {
 
 /// Delete dependencies directories, which aren't in ``LOCK_FILE_NAME`` file.
 pub fn clean(
-    locked_dependencies: &Dependencies,
+    locked_dependencies: &[Dependency],
     dependencies_dir: &Path,
     buffer: &mut impl std::io::Write,
 ) -> Result<()> {
     let mut locked_dependency_dirs = locked_dependencies
-        .rolling
         .iter()
-        .map(rolling_dependency_dir)
-        .chain(locked_dependencies.commit.iter().map(commit_dependency_dir))
+        .map(dependency_dir)
         .collect::<Result<Vec<OsString>>>()?;
     locked_dependency_dirs.sort_unstable();
     for file in fs::read_dir(dependencies_dir)? {
@@ -191,55 +173,60 @@ pub fn clean(
     Ok(())
 }
 
-pub fn rolling_dependency_dir(dependency: &RollingDependency) -> Result<OsString> {
-    let mut dir = OsString::from(repo_name(&dependency.repo)?);
-    dir.push(".");
-    dir.push(&dependency.branch.clone().unwrap_or("default".to_string()));
-    dir.push(".rolling");
-    Ok(dir)
-}
-
-fn commit_dependency_dir(dependency: &CommitDependency) -> Result<OsString> {
-    let mut dir = OsString::from(repo_name(&dependency.repo)?);
-    dir.push(".");
-    dir.push(&dependency.commit);
-    dir.push(".commit");
-    Ok(dir)
+pub fn dependency_dir(dependency: &Dependency) -> Result<OsString> {
+    match dependency {
+        Dependency::Commit { repo, commit } => {
+            let mut dir = OsString::from(repo_name(repo)?);
+            dir.push(".");
+            dir.push(commit);
+            dir.push(".commit");
+            Ok(dir)
+        }
+        Dependency::Rolling { repo, branch } => {
+            let mut dir = OsString::from(repo_name(repo)?);
+            dir.push(".");
+            dir.push(&branch.clone().unwrap_or("default".to_string()));
+            dir.push(".rolling");
+            Ok(dir)
+        }
+    }
 }
 
 fn repo_name(git_url: &str) -> Result<&str> {
     Ok(regex::Regex::new(r"/([^/]*)\.git")?
         .captures(git_url)
         .ok_or_else(|| {
-            anyhow::anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.")
+            anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.")
         })?
         .get(1)
         .ok_or_else(|| {
-            anyhow::anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.")
+            anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.")
         })?
         .as_str())
 }
 
 /// Content of ``LOCK_FILE_NAME`` file.
-pub fn locked_dependencies(lock_file_dir: &Path) -> Result<Dependencies> {
+pub fn locked_dependencies(lock_file_dir: &Path) -> Result<Vec<Dependency>> {
     let lock_file = lock_file_dir.join(LOCK_FILE_NAME);
-    Ok(if lock_file.exists() {
-        toml::from_str(
+    if lock_file.exists() {
+        toml::from_str::<HashMap<String, Vec<Dependency>>>(
             &fs::read_to_string(&lock_file)
                 .with_context(|| format!("Failed with {lock_file:#?} lock file."))?,
         )
         .with_context(|| format!("Failed with {lock_file:#?} lock file."))?
+        .remove("dependencies")
+        .ok_or_else(|| anyhow!("There isn't dependencies field in {lock_file:#?} lock file."))
     } else {
-        Dependencies::default()
-    })
+        Ok(Vec::new())
+    }
 }
 
 /// Write dependencies to ``LOCK_FILE_NAME`` file.
-pub fn lock(lock_dir: &Path, dependencies: &Dependencies) -> Result<()> {
+pub fn lock(lock_dir: &Path, dependencies: &[Dependency]) -> Result<()> {
     let lock_file = lock_dir.join(LOCK_FILE_NAME);
     fs::write(
         &lock_file,
-        toml::to_string(dependencies)
+        toml::to_string(&HashMap::from([("dependencies", dependencies)]))
             .with_context(|| format!("Failed with {lock_file:#?} lock file."))?,
     )?;
     Ok(())
@@ -249,6 +236,7 @@ pub fn lock(lock_dir: &Path, dependencies: &Dependencies) -> Result<()> {
 mod tests {
     use super::*;
     use std::{fs, io::empty, path::Path};
+    use Dependency::{Commit, Rolling};
 
     #[test]
     fn repo_name_t_1() {
@@ -286,7 +274,7 @@ mod tests {
             r#"
             name = "package_name"
 
-            [[dependencies.rolling]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             "#,
         )
@@ -295,13 +283,10 @@ mod tests {
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
             install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
-            Dependencies {
-                rolling: vec![RollingDependency {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    branch: None
-                }],
-                commit: vec![]
-            }
+            vec![Rolling {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                branch: None
+            }]
         );
         assert!(Path::exists(
             &dependencies_dir.join("githubOtherFiles.default.rolling")
@@ -317,7 +302,7 @@ mod tests {
             r#"
             name = "package_name"
 
-            [[dependencies.rolling]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             branch = "main"
             "#,
@@ -327,13 +312,10 @@ mod tests {
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
             install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
-            Dependencies {
-                rolling: vec![RollingDependency {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    branch: Some("main".to_string())
-                }],
-                commit: vec![]
-            }
+            vec![Rolling {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                branch: Some("main".to_string())
+            }]
         );
         assert!(Path::exists(
             &dependencies_dir.join("githubOtherFiles.main.rolling")
@@ -349,10 +331,10 @@ mod tests {
             r#"
             name = "package_name"
 
-            [[dependencies.rolling]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
 
-            [[dependencies.rolling]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             branch = "b"
             "#,
@@ -362,19 +344,16 @@ mod tests {
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
             install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
-            Dependencies {
-                rolling: vec![
-                    RollingDependency {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: None
-                    },
-                    RollingDependency {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: Some("b".to_string())
-                    }
-                ],
-                commit: vec![]
-            }
+            vec![
+                Rolling {
+                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                    branch: None
+                },
+                Rolling {
+                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                    branch: Some("b".to_string())
+                }
+            ]
         );
         assert!(Path::exists(
             &dependencies_dir.join("githubOtherFiles.default.rolling")
@@ -393,7 +372,7 @@ mod tests {
             r#"
             name = "package_name"
 
-            [[dependencies.rolling]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             branch = "with_dependencies"
             "#,
@@ -403,19 +382,16 @@ mod tests {
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
             install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
-            Dependencies {
-                rolling: vec![
-                    RollingDependency {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: None
-                    },
-                    RollingDependency {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: Some("with_dependencies".to_string())
-                    }
-                ],
-                commit: vec![]
-            }
+            vec![
+                Rolling {
+                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                    branch: None
+                },
+                Rolling {
+                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                    branch: Some("with_dependencies".to_string())
+                }
+            ]
         );
         assert!(Path::exists(
             &dependencies_dir.join("githubOtherFiles.with_dependencies.rolling")
@@ -434,7 +410,7 @@ mod tests {
             r#"
             name = "package_name"
 
-            [[dependencies.commit]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             commit = "909896f5646b7fd9f058dcd21961b8d5599dec3b"
             "#,
@@ -444,13 +420,12 @@ mod tests {
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
             install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
-            Dependencies {
-                rolling: vec![],
-                commit: vec![CommitDependency {
+            vec![{
+                Commit {
                     repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    commit: "909896f5646b7fd9f058dcd21961b8d5599dec3b".to_string()
-                }]
-            }
+                    commit: "909896f5646b7fd9f058dcd21961b8d5599dec3b".to_string(),
+                }
+            }]
         );
         assert!(Path::exists(&dependencies_dir.join(
             "githubOtherFiles.909896f5646b7fd9f058dcd21961b8d5599dec3b.commit"
@@ -466,9 +441,9 @@ mod tests {
             r#"
             name = "package_name"
 
-            [[dependencies.commit]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            commit = "a4bf57c513ebc8ed89cc546e8c120c9321357632"
+            commit = "e636a1ec3659dee39ae935837fb13eea7e7d8faf"
             "#,
         )
         .unwrap();
@@ -476,25 +451,25 @@ mod tests {
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
             install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
-            Dependencies {
-                rolling: vec![RollingDependency {
+            vec![
+                Commit {
+                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                    commit: "e636a1ec3659dee39ae935837fb13eea7e7d8faf".to_string()
+                },
+                Rolling {
                     repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
                     branch: None
-                }],
-                commit: vec![CommitDependency {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    commit: "a4bf57c513ebc8ed89cc546e8c120c9321357632".to_string()
-                }]
-            }
+                },
+            ]
         );
         let commit_dependency_dir = dependencies_dir
-            .join("githubOtherFiles.a4bf57c513ebc8ed89cc546e8c120c9321357632.commit");
+            .join("githubOtherFiles.e636a1ec3659dee39ae935837fb13eea7e7d8faf.commit");
         assert!(Path::exists(&commit_dependency_dir));
         assert_eq!(
             fs::read_to_string(commit_dependency_dir.join(CFG_FILE_NAME)).unwrap(),
             r#"name = "otherFiles"
 
-[[dependencies.rolling]]
+[[dependencies]]
 repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
 "#
         );
@@ -512,7 +487,7 @@ repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             r#"
             name = "package_name"
 
-            [[dependencies.rolling]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             "#,
         )
@@ -521,13 +496,10 @@ repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
             install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
-            Dependencies {
-                rolling: vec![RollingDependency {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    branch: None
-                }],
-                commit: vec![]
-            }
+            vec![Rolling {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                branch: None
+            },]
         );
         assert!(Path::exists(
             &dependencies_dir.join("githubOtherFiles.default.rolling")
@@ -541,7 +513,7 @@ repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             r#"
             name = "package_name"
 
-            [[dependencies.rolling]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             branch = "b"
             "#,
@@ -549,13 +521,10 @@ repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
         .unwrap();
         assert_eq!(
             install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
-            Dependencies {
-                rolling: vec![RollingDependency {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    branch: Some("b".to_string())
-                }],
-                commit: vec![]
-            }
+            vec![Rolling {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                branch: Some("b".to_string())
+            },]
         );
         assert!(Path::exists(
             &dependencies_dir.join("githubOtherFiles.default.rolling")
@@ -574,7 +543,7 @@ repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             r#"
             name = "package_name"
 
-            [[dependencies.rolling]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             "#,
         )
@@ -583,13 +552,10 @@ repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
         fs::create_dir(&dependencies_dir).unwrap();
         assert_eq!(
             install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
-            Dependencies {
-                rolling: vec![RollingDependency {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    branch: None
-                }],
-                commit: vec![]
-            }
+            vec![Rolling {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                branch: None
+            },]
         );
         assert!(Path::exists(
             &dependencies_dir.join("githubOtherFiles.default.rolling")
@@ -597,18 +563,154 @@ repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
         assert_eq!(nfiles(&dependencies_dir), 1);
         assert_eq!(
             install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
-            Dependencies {
-                rolling: vec![RollingDependency {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    branch: None
-                }],
-                commit: vec![]
-            }
+            vec![Rolling {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                branch: None
+            },]
         );
         assert!(Path::exists(
             &dependencies_dir.join("githubOtherFiles.default.rolling")
         ));
         assert_eq!(nfiles(&dependencies_dir), 1);
+    }
+
+    #[test]
+    fn install_t_9() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp_dir.path().join(CFG_FILE_NAME),
+            r#"
+            name = "package_name"
+
+            [[dependencies]]
+            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+            "#,
+        )
+        .unwrap();
+        let dependencies_dir = tmp_dir.path().join("dependencies");
+        fs::create_dir(&dependencies_dir).unwrap();
+        assert_eq!(
+            install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
+            vec![Rolling {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                branch: None
+            }]
+        );
+        assert!(Path::exists(
+            &dependencies_dir.join("githubOtherFiles.default.rolling")
+        ));
+        assert_eq!(nfiles(&dependencies_dir), 1);
+        fs::write(
+            tmp_dir.path().join(CFG_FILE_NAME),
+            r#"
+            name = "package_name"
+
+            [[dependencies]]
+            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+            branch = "with_dependencies"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
+            vec![
+                Rolling {
+                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                    branch: None
+                },
+                Rolling {
+                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                    branch: Some("with_dependencies".to_string())
+                }
+            ]
+        );
+        assert!(Path::exists(
+            &dependencies_dir.join("githubOtherFiles.default.rolling")
+        ));
+        assert!(Path::exists(
+            &dependencies_dir.join("githubOtherFiles.with_dependencies.rolling")
+        ));
+        assert_eq!(nfiles(&dependencies_dir), 2);
+    }
+
+    #[test]
+    fn install_t_10() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        fs::write(
+            tmp_dir.path().join(CFG_FILE_NAME),
+            r#"
+            name = "package_name"
+
+            [[dependencies]]
+            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+            branch = "with_dependencies"
+            "#,
+        )
+        .unwrap();
+        let dependencies_dir = tmp_dir.path().join("dependencies");
+        fs::create_dir(&dependencies_dir).unwrap();
+        fs::write(
+            tmp_dir.path().join(CFG_FILE_NAME),
+            r#"
+            name = "package_name"
+
+            [[dependencies]]
+            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+            branch = "with_dependencies"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
+            vec![
+                Rolling {
+                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                    branch: None
+                },
+                Rolling {
+                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                    branch: Some("with_dependencies".to_string())
+                }
+            ]
+        );
+        assert!(Path::exists(
+            &dependencies_dir.join("githubOtherFiles.default.rolling")
+        ));
+        assert!(Path::exists(
+            &dependencies_dir.join("githubOtherFiles.with_dependencies.rolling")
+        ));
+        assert_eq!(nfiles(&dependencies_dir), 2);
+        fs::write(
+            tmp_dir.path().join(CFG_FILE_NAME),
+            r#"
+            name = "package_name"
+
+            [[dependencies]]
+            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+            branch = "with_dependencies"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(
+            install(tmp_dir.path(), &dependencies_dir, &mut empty()).unwrap(),
+            vec![
+                Rolling {
+                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                    branch: None
+                },
+                Rolling {
+                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                    branch: Some("with_dependencies".to_string())
+                }
+            ]
+        );
+        assert!(Path::exists(
+            &dependencies_dir.join("githubOtherFiles.default.rolling")
+        ));
+        assert!(Path::exists(
+            &dependencies_dir.join("githubOtherFiles.with_dependencies.rolling")
+        ));
+        assert_eq!(nfiles(&dependencies_dir), 2);
     }
 
     #[test]
@@ -620,7 +722,7 @@ repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             r#"
             name = "package_name"
 
-            [[dependencies.rolling]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             "#,
         )
@@ -665,10 +767,10 @@ repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             r#"
             name = "package_name"
 
-            [[dependencies.rolling]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
 
-            [[dependencies.rolling]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             branch = "b"
             "#,
@@ -689,7 +791,7 @@ repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             r#"
             name = "package_name"
 
-            [[dependencies.rolling]]
+            [[dependencies]]
             repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
             "#,
         )

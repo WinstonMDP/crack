@@ -44,17 +44,19 @@ fn main() -> anyhow::Result<()> {
         }
         Subcommand::U => {
             let locked_dependencies = crack::locked_dependencies(&project_root)?;
-            for dependency in &locked_dependencies.rolling {
-                let dir = dependencies_dir.join(crack::rolling_dependency_dir(dependency)?);
-                crack::with_sterr(
-                    &std::process::Command::new("git")
-                        .current_dir(&dir)
-                        .arg("pull")
-                        .arg("-q")
-                        .arg("--depth=1")
-                        .output()?,
-                )
-                .with_context(|| format!("Failed with {dir:#?} directory."))?;
+            for dependency in &locked_dependencies {
+                if let crack::Dependency::Rolling { repo: _, branch: _ } = dependency {
+                    let dir = dependencies_dir.join(crack::dependency_dir(dependency)?);
+                    crack::with_sterr(
+                        &std::process::Command::new("git")
+                            .current_dir(&dir)
+                            .arg("pull")
+                            .arg("-q")
+                            .arg("--depth=1")
+                            .output()?,
+                    )
+                    .with_context(|| format!("Failed with {dir:#?} directory."))?;
+                }
             }
         }
         Subcommand::C => {
