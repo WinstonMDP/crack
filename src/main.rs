@@ -11,7 +11,8 @@ pub struct Cli {
 
 #[derive(clap::Subcommand)]
 pub enum Subcommand {
-    /// Install crack.toml deps, which aren't in the deps directory.
+    /// Install crack.toml deps, which aren't in the deps directory, and
+    /// produces crack.build.
     I,
     /// Update crack.lock deps.
     U,
@@ -25,6 +26,7 @@ fn install(project_root: &Path, deps_dir: &Path) -> Result<()> {
     }
     let installed = crack::install(project_root, deps_dir, &mut std::io::stdout())?;
     crack::lock(project_root, &installed.0)?;
+    println!("{:#?}", &installed.1);
     fs::write(
         "crack.build",
         serde_json::to_string(&installed.1).context("Failed with crack.build file.")?,

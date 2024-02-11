@@ -1,3 +1,6 @@
+// TODO: buffer pre-write
+// TODO: context for errors
+
 use anyhow::{anyhow, Context, Result};
 use bimap::BiMap;
 use petgraph::{prelude::NodeIndex, Graph};
@@ -63,7 +66,8 @@ pub struct BuildUnit {
 /// checkout to the respective commits.
 /// Clone only those repositories, which aren't in ``deps_dir``.
 /// Returns all deps, which must be contained in ``deps_dir``
-/// according to cfg and its transitive deps.
+/// according to cfg and its transitive deps, and sccs of deps in
+/// reverse topological order.
 #[allow(clippy::missing_panics_doc, clippy::cast_possible_truncation)]
 pub fn install(
     cfg_dir: &Path,
@@ -104,14 +108,14 @@ fn install_h(
     deps_dir: &Path,
     cfg_path: &Path,
     buffer: &mut impl std::io::Write,
-    dir_name: OsString,
+    cfg_dir: OsString,
     prev_i: NodeIndex,
     i_bimap: &mut BiMap<BuildUnit, NodeIndex>,
     graph: &mut Graph<(), ()>,
-    installed_locks: &mut Vec<LockUnit>,
+    locks: &mut Vec<LockUnit>,
 ) -> Result<()> {
-    let mut vec_for_name_map = vec![];
-    let mut vec_to_trans_deps_install = vec![];
+    let mut vec_for_name_map = Vec::with_capacity(deps.len());
+    let mut vec_to_trans_deps_install = Vec::with_capacity(deps.len());
     for dep in deps {
         let dir_name = dep_dir(&dep.lock_unit)?;
         let dir_path = deps_dir.join(&dir_name);
@@ -121,6 +125,7 @@ fn install_h(
                     ref repo,
                     ref commit,
                 } => {
+                    writeln!(buffer, "Start to install {:?}", dep.lock_unit)?;
                     std::fs::create_dir(&dir_path)?;
                     with_stderr_and_context(
                         &Command::new("git")
@@ -170,6 +175,7 @@ fn install_h(
                     ref repo,
                     ref branch,
                 } => {
+                    writeln!(buffer, "Start to install {:?}", dep.lock_unit)?;
                     let mut command = Command::new("git");
                     let mut command = command
                         .current_dir(deps_dir)
@@ -192,7 +198,7 @@ fn install_h(
         let dep_cfg = Cfg::from(&dir_path.join(CFG_FILE_NAME))?;
         vec_for_name_map.push((dep_cfg.name, dep.name, dir_name.clone()));
         vec_to_trans_deps_install.push((dep_cfg.deps, dir_name, dir_path));
-        installed_locks.push(dep.lock_unit);
+        locks.push(dep.lock_unit);
     }
     let vec_for_name_map: Vec<(String, OsString)> = vec_for_name_map
         .into_iter()
@@ -200,11 +206,14 @@ fn install_h(
         .collect();
     let mut name_map = BTreeMap::new();
     for (name, dir) in vec_for_name_map {
-        anyhow::ensure!(!name_map.contains_key(&name));
+        anyhow::ensure!(
+            !name_map.contains_key(&name),
+            "Two equal names exists in {cfg_path:?}."
+        );
         name_map.insert(name, dir);
     }
     let build_unit = BuildUnit {
-        dir: dir_name,
+        dir: cfg_dir,
         name_map,
     };
     let (i, contains_edge) = if i_bimap.contains_left(&build_unit) {
@@ -217,9 +226,9 @@ fn install_h(
     };
     if !contains_edge {
         graph.add_edge(prev_i, i, ());
-        for (deps, dep_dir_name, dep_dir_path) in vec_to_trans_deps_install {
+        for (dep_deps, dep_dir_name, dep_dir_path) in vec_to_trans_deps_install {
             install_h(
-                deps,
+                dep_deps,
                 deps_dir,
                 &dep_dir_path,
                 buffer,
@@ -227,7 +236,7 @@ fn install_h(
                 i,
                 i_bimap,
                 graph,
-                installed_locks,
+                locks,
             )?;
         }
     }
@@ -237,9 +246,9 @@ fn install_h(
 fn with_stderr_and_context(
     output: &std::process::Output,
     cfg: &Path,
-    dep: &LockUnit,
+    lock: &LockUnit,
 ) -> Result<()> {
-    with_sterr(output).with_context(|| format!("Failed with {cfg:?} cfg file, {dep:?}."))
+    with_sterr(output).with_context(|| format!("Failed with {cfg:?} cfg file, {lock:?}."))
 }
 
 pub fn with_sterr(output: &std::process::Output) -> Result<()> {
@@ -250,12 +259,8 @@ pub fn with_sterr(output: &std::process::Output) -> Result<()> {
 }
 
 /// Delete deps directories, which aren't in ``LOCK_FILE_NAME`` file.
-pub fn clean(
-    locked_deps: &[LockUnit],
-    deps_dir: &Path,
-    buffer: &mut impl std::io::Write,
-) -> Result<()> {
-    let locked_dep_dirs = locked_deps
+pub fn clean(locks: &[LockUnit], deps_dir: &Path, buffer: &mut impl std::io::Write) -> Result<()> {
+    let locked_dep_dirs = locks
         .iter()
         .map(dep_dir)
         .collect::<Result<Vec<OsString>>>()?;
@@ -272,8 +277,8 @@ pub fn clean(
     Ok(())
 }
 
-pub fn dep_dir(dep: &LockUnit) -> Result<OsString> {
-    match dep {
+pub fn dep_dir(lock: &LockUnit) -> Result<OsString> {
+    match lock {
         LockUnit::Commit { repo, commit } => {
             let mut dir = OsString::from(repo_name(repo)?);
             dir.push(".commit");
@@ -316,7 +321,7 @@ pub fn locked_deps(lock_file_dir: &Path) -> Result<Vec<LockUnit>> {
         .remove("deps")
         .ok_or_else(|| anyhow!("There isn't deps field in {lock_file:#?} lock file."))
     } else {
-        Ok(Vec::new())
+        Ok(vec![])
     }
 }
 
