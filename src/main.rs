@@ -49,9 +49,9 @@ fn main() -> Result<()> {
         Subcommand::I => install(&project_root, &deps_dir)?,
         Subcommand::U => {
             let locked_deps = crack::locked_deps(&project_root)?;
-            for dep in &locked_deps {
-                if let crack::Dep::Rolling { repo: _, branch: _ } = dep {
-                    let dir = deps_dir.join(crack::dep_dir(dep)?);
+            for lock in &locked_deps {
+                if let crack::LockUnit::Rolling { .. } = lock {
+                    let dir = deps_dir.join(crack::dep_dir(lock)?);
                     crack::with_sterr(
                         &std::process::Command::new("git")
                             .current_dir(&dir)
