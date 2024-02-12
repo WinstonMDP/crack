@@ -39,7 +39,7 @@ Update ``crack.lock`` deps.
 crack u
 ```
 
-Delete dir, which aren't in ``crack.lock``.
+Delete dirs, which aren't in ``crack.lock``.
 
 ```zsh
 crack c
