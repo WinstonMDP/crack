@@ -255,7 +255,7 @@ pub fn with_sterr(output: &std::process::Output) -> Result<()> {
     Ok(())
 }
 
-/// Delete deps directories, which aren't in ``LOCK_FILE_NAME`` file.
+/// Delete deps dirs, which aren't in ``LOCK_FILE_NAME`` file.
 pub fn clean(locks: &[LockUnit], deps_dir: &Path, buffer: &mut impl std::io::Write) -> Result<()> {
     let locked_dep_dirs = locks
         .iter()
@@ -263,11 +263,11 @@ pub fn clean(locks: &[LockUnit], deps_dir: &Path, buffer: &mut impl std::io::Wri
         .collect::<Result<Vec<OsString>>>()?;
     for file in fs::read_dir(deps_dir)? {
         let dir = file
-            .with_context(|| format!("Failed with {deps_dir:#?} deps directory."))?
+            .with_context(|| format!("Failed with {deps_dir:#?} deps dir."))?
             .file_name();
         if locked_dep_dirs.binary_search(&dir).is_err() {
             fs::remove_dir_all(deps_dir.join(&dir))
-                .with_context(|| format!("Failed with {dir:#?} directory."))?;
+                .with_context(|| format!("Failed with {dir:#?} dir."))?;
             writeln!(buffer, "{dir:#?} was deleted")?;
         }
     }

@@ -1,6 +1,6 @@
 # Crack
 
-Specify dependencies in ``crack.toml``. ``crack.toml`` must be in the project root.
+Specify dep in ``crack.toml``. ``crack.toml`` must be in the project root.
 
 ``crack.toml`` example:
 
@@ -21,25 +21,25 @@ repo = "git_repo_url"
 commit = "sha"
 ```
 
-All dependencies are stored in ``project_root/dependencies`` directory.
+All deps are stored in ``project_root/deps`` dir.
 
 ## Commands
 
-Install ``crack.toml`` dependencies, which aren't in the dependencies directory.
-It produces ``crack.lock``, a dependencies directory, if it doesn't exist, and
+Install ``crack.toml`` deps, which aren't in the deps dir.
+It produces ``crack.lock``, a deps dir, if it doesn't exist, and
 ``crack.build``.
 
 ```zsh
 crack i
 ```
 
-Update ``crack.lock`` dependencies.
+Update ``crack.lock`` deps.
 
 ```zsh
 crack u
 ```
 
-Delete directories, which aren't in ``crack.lock``.
+Delete dir, which aren't in ``crack.lock``.
 
 ```zsh
 crack c
