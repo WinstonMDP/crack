@@ -1,6 +1,3 @@
-// TODO: buffer pre-write
-// TODO: context for errors
-
 use anyhow::{anyhow, Context, Result};
 use bimap::BiMap;
 use petgraph::{prelude::NodeIndex, Graph};
@@ -60,15 +57,15 @@ pub struct BuildUnit {
     name_map: BTreeMap<String, OsString>,
 }
 
-/// Clone rolling deps in ``<repo_name>.rolling.<branch>`` directories and
+/// Clone rolling deps in ``<repo_name>.rolling.<branch>`` dirs and
 /// checkout to the respective branch.
-/// Clone commit deps in ``<repo_name>.commit.<commit>`` directories and
+/// Clone commit deps in ``<repo_name>.commit.<commit>`` dirs and
 /// checkout to the respective commits.
 /// Clone only those repositories, which aren't in ``deps_dir``.
 /// Returns all deps, which must be contained in ``deps_dir``
-/// according to cfg and its transitive deps, and sccs of deps in
-/// reverse topological order.
-#[allow(clippy::missing_panics_doc, clippy::cast_possible_truncation)]
+/// according to cfg and its transitive deps, and sccs of deps and root
+/// project in reverse topological order.
+#[allow(clippy::missing_panics_doc)]
 pub fn install(
     cfg_dir: &Path,
     deps_dir: &Path,
@@ -125,7 +122,7 @@ fn install_h(
                     ref repo,
                     ref commit,
                 } => {
-                    writeln!(buffer, "Start to install {:?}", dep.lock_unit)?;
+                    writeln!(buffer, "{:?} is started to install", dep.lock_unit)?;
                     std::fs::create_dir(&dir_path)?;
                     with_stderr_and_context(
                         &Command::new("git")
@@ -175,7 +172,7 @@ fn install_h(
                     ref repo,
                     ref branch,
                 } => {
-                    writeln!(buffer, "Start to install {:?}", dep.lock_unit)?;
+                    writeln!(buffer, "{:?} is started to install", dep.lock_unit)?;
                     let mut command = Command::new("git");
                     let mut command = command
                         .current_dir(deps_dir)
@@ -208,7 +205,7 @@ fn install_h(
     for (name, dir) in vec_for_name_map {
         anyhow::ensure!(
             !name_map.contains_key(&name),
-            "Two equal names exists in {cfg_path:?}."
+            "Two equal names of deps exist in {cfg_path:?}."
         );
         name_map.insert(name, dir);
     }
