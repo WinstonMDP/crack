@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use bimap::BiMap;
 use petgraph::{prelude::NodeIndex, Graph};
 use serde::{Deserialize, Serialize};
@@ -38,7 +38,7 @@ pub struct Dep {
     name: Option<String>,
 }
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Hash, Clone)]
 #[serde(untagged)]
 pub enum LockUnit {
     Commit {
@@ -65,7 +65,6 @@ pub struct BuildUnit {
 /// Returns all deps, which must be contained in ``deps_dir``
 /// according to cfg and its transitive deps, and sccs of deps and root
 /// project in reverse topological order.
-#[allow(clippy::missing_panics_doc)]
 pub fn install(
     cfg_dir: &Path,
     deps_dir: &Path,
@@ -114,19 +113,18 @@ fn install_h(
     let mut vec_for_name_map = Vec::with_capacity(deps.len());
     let mut vec_to_trans_deps_install = Vec::with_capacity(deps.len());
     for dep in deps {
-        let dir_name = dep_dir(&dep.lock_unit)?;
-        let dir_path = deps_dir.join(&dir_name);
-        if !Path::new(&dir_path).exists() {
+        let dep_dir_name = dep_dir(&dep.lock_unit)?;
+        let dep_dir_path = deps_dir.join(&dep_dir_name);
+        if !Path::new(&dep_dir_path).exists() {
             match dep.lock_unit {
                 LockUnit::Commit {
                     ref repo,
                     ref commit,
                 } => {
-                    writeln!(buffer, "{:?} is started to install", dep.lock_unit)?;
-                    std::fs::create_dir(&dir_path)?;
+                    std::fs::create_dir(&dep_dir_path)?;
                     with_stderr_and_context(
                         &Command::new("git")
-                            .current_dir(&dir_path)
+                            .current_dir(&dep_dir_path)
                             .arg("init")
                             .arg("-q")
                             .output()?,
@@ -135,7 +133,7 @@ fn install_h(
                     )?;
                     with_stderr_and_context(
                         &Command::new("git")
-                            .current_dir(&dir_path)
+                            .current_dir(&dep_dir_path)
                             .arg("remote")
                             .arg("add")
                             .arg("origin")
@@ -146,7 +144,7 @@ fn install_h(
                     )?;
                     with_stderr_and_context(
                         &Command::new("git")
-                            .current_dir(&dir_path)
+                            .current_dir(&dep_dir_path)
                             .arg("fetch")
                             .arg("-q")
                             .arg("--depth=1")
@@ -158,7 +156,7 @@ fn install_h(
                     )?;
                     with_stderr_and_context(
                         &Command::new("git")
-                            .current_dir(&dir_path)
+                            .current_dir(&dep_dir_path)
                             .arg("checkout")
                             .arg("-q")
                             .arg("FETCH_HEAD")
@@ -172,7 +170,6 @@ fn install_h(
                     ref repo,
                     ref branch,
                 } => {
-                    writeln!(buffer, "{:?} is started to install", dep.lock_unit)?;
                     let mut command = Command::new("git");
                     let mut command = command
                         .current_dir(deps_dir)
@@ -184,7 +181,7 @@ fn install_h(
                         command = command.arg("-b").arg(branch);
                     }
                     with_stderr_and_context(
-                        &command.arg(&dir_name).output()?,
+                        &command.arg(&dep_dir_name).output()?,
                         cfg_path,
                         &dep.lock_unit,
                     )?;
@@ -192,22 +189,18 @@ fn install_h(
                 }
             }
         }
-        let dep_cfg = Cfg::from(&dir_path.join(CFG_FILE_NAME))?;
-        vec_for_name_map.push((dep_cfg.name, dep.name, dir_name.clone()));
-        vec_to_trans_deps_install.push((dep_cfg.deps, dir_name, dir_path));
+        let dep_cfg = Cfg::from(&dep_dir_path.join(CFG_FILE_NAME))?;
+        vec_for_name_map.push((dep.name.unwrap_or(dep_cfg.name), dep_dir_name.clone()));
+        vec_to_trans_deps_install.push((dep_cfg.deps, dep_dir_name, dep_dir_path));
         locks.push(dep.lock_unit);
     }
-    let vec_for_name_map: Vec<(String, OsString)> = vec_for_name_map
-        .into_iter()
-        .map(|x| (if let Some(name) = x.1 { name } else { x.0 }, x.2))
-        .collect();
     let mut name_map = BTreeMap::new();
-    for (name, dir) in vec_for_name_map {
-        anyhow::ensure!(
-            !name_map.contains_key(&name),
+    for (dep_name, dep_dir) in vec_for_name_map {
+        ensure!(
+            !name_map.contains_key(&dep_name),
             "Two equal names of deps exist in {cfg_path:?}."
         );
-        name_map.insert(name, dir);
+        name_map.insert(dep_name, dep_dir);
     }
     let build_unit = BuildUnit {
         dir: cfg_dir,
@@ -249,14 +242,22 @@ fn with_stderr_and_context(
 }
 
 pub fn with_sterr(output: &std::process::Output) -> Result<()> {
-    if !output.stderr.is_empty() {
-        anyhow::bail!(std::str::from_utf8(&output.stderr)?.to_string())
-    }
+    ensure!(
+        output.stderr.is_empty(),
+        std::str::from_utf8(&output.stderr)?.to_string()
+    );
     Ok(())
+}
+
+fn is_sorted<T: Ord + Clone>(array: &[T]) -> bool {
+    let mut cloned = array.to_vec();
+    cloned.sort();
+    cloned == array
 }
 
 /// Delete deps dirs, which aren't in ``LOCK_FILE_NAME`` file.
 pub fn clean(locks: &[LockUnit], deps_dir: &Path, buffer: &mut impl std::io::Write) -> Result<()> {
+    debug_assert!(is_sorted(locks));
     let locked_dep_dirs = locks
         .iter()
         .map(dep_dir)

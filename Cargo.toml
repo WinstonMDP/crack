@@ -6,6 +6,7 @@ edition = "2021"
 [lints.clippy]
 pedantic = "warn"
 missing_errors_doc = "allow"
+missing_panics_doc = "allow"
 
 [dependencies]
 anyhow = "1.0.75"

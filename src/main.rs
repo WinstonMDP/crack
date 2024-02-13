@@ -12,7 +12,7 @@ pub struct Cli {
 #[derive(clap::Subcommand)]
 pub enum Subcommand {
     /// Install crack.toml deps, which aren't in the deps directory, and
-    /// produces crack.build.
+    /// produce crack.build.
     I,
     /// Update crack.lock deps.
     U,
@@ -62,6 +62,7 @@ fn main() -> Result<()> {
                             .output()?,
                     )
                     .with_context(|| format!("Failed with {dir:#?} directory."))?;
+                    println!("{lock:?} was processed");
                 }
             }
             install(&project_root, &deps_dir)?;
