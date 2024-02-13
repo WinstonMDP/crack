@@ -1,59 +1,79 @@
-use anyhow::Context;
+use anyhow::{Context, Result};
 use clap::Parser;
-use crack::Subcommand;
-use std::fs;
+use std::{fs, path::Path};
 
-fn main() -> anyhow::Result<()> {
-    let cli = crack::Cli::parse();
+#[derive(clap::Parser)]
+#[command(about = "A Sanskrit package manager", long_about = None)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub subcommand: Subcommand,
+}
+
+#[derive(clap::Subcommand)]
+pub enum Subcommand {
+    /// Install crack.toml deps, which aren't in the deps directory, and
+    /// produce crack.build.
+    I,
+    /// Update crack.lock deps.
+    U,
+    /// Delete directories, which aren't in crack.lock.
+    C,
+}
+
+fn install(project_root: &Path, deps_dir: &Path) -> Result<()> {
+    if !deps_dir.exists() {
+        fs::create_dir_all(deps_dir)?;
+    }
+    let installed = crack::install(project_root, deps_dir, &mut std::io::stdout())?;
+    crack::lock(project_root, &installed.0)?;
+    fs::write(
+        "crack.build",
+        serde_json::to_string(&installed.1).context("Failed with crack.build file.")?,
+    )?;
+    Ok(())
+}
+
+fn main() -> Result<()> {
+    let cli = Cli::parse();
     let project_root = std::env::current_dir()?
         .ancestors()
         .find(|x| x.join(crack::CFG_FILE_NAME).exists())
-        .map(std::path::Path::to_path_buf)
+        .map(Path::to_path_buf)
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "Can't find {} in the current and ancestor directories.",
                 crack::CFG_FILE_NAME
             )
         })?;
-    let dependencies_dir = project_root.join("dependencies");
+    let deps_dir = project_root.join("deps");
     match cli.subcommand {
-        Subcommand::I => {
-            if !dependencies_dir.exists() {
-                fs::create_dir_all(&dependencies_dir).unwrap();
-            }
-            crack::lock(
-                &project_root,
-                &crack::install(&project_root, &dependencies_dir, &mut std::io::stdout())?,
-            )?;
-        }
+        Subcommand::I => install(&project_root, &deps_dir)?,
         Subcommand::U => {
-            let locked_dependencies = crack::locked_dependencies(&project_root)?;
-            for dependency in &locked_dependencies.rolling {
-                let dir = dependencies_dir.join(crack::rolling_dependency_dir(dependency)?);
-                crack::with_sterr(
-                    &std::process::Command::new("git")
-                        .current_dir(&dir)
-                        .arg("pull")
-                        .arg("-q")
-                        .arg("--depth=1")
-                        .output()?,
-                )
-                .with_context(|| format!("Failed with {dir:#?} directory."))?;
+            let locked_deps = crack::locked_deps(&project_root)?;
+            for lock in &locked_deps {
+                if let crack::LockUnit::Rolling { .. } = lock {
+                    let dir = deps_dir.join(crack::dep_dir(lock)?);
+                    crack::with_sterr(
+                        &std::process::Command::new("git")
+                            .current_dir(&dir)
+                            .arg("pull")
+                            .arg("-q")
+                            .arg("--depth=1")
+                            .output()?,
+                    )
+                    .with_context(|| format!("Failed with {dir:#?} directory."))?;
+                    println!("{lock:?} was processed");
+                }
             }
+            install(&project_root, &deps_dir)?;
         }
         Subcommand::C => {
-            if dependencies_dir.exists() {
-                let locked_dependencies = crack::locked_dependencies(&project_root)?;
-                fs::create_dir_all(&dependencies_dir).unwrap();
-                crack::clean(
-                    &locked_dependencies,
-                    &dependencies_dir,
-                    &mut std::io::stdout(),
-                )?;
+            if deps_dir.exists() {
+                let locked_deps = crack::locked_deps(&project_root)?;
+                fs::create_dir_all(&deps_dir)?;
+                crack::clean(&locked_deps, &deps_dir, &mut std::io::stdout())?;
             } else {
-                println!(
-                    "There is nothing to clean. {dependencies_dir:#?} directory doesn't exist."
-                );
+                println!("There is nothing to clean. {deps_dir:#?} directory doesn't exist.");
             }
         }
     };
