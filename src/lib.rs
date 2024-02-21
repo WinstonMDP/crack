@@ -1,12 +1,15 @@
+// TODO: dev-deps
+
 use anyhow::{anyhow, ensure, Context, Result};
 use bimap::BiMap;
 use petgraph::{prelude::NodeIndex, Graph};
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     ffi::OsString,
-    fmt::Debug,
     fs,
+    hash::BuildHasher,
     path::Path,
     process::Command,
 };
@@ -16,9 +19,11 @@ const LOCK_FILE_NAME: &str = "crack.lock";
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Cfg {
+    pub name: String,
+    #[serde(default)]
+    pub dev_deps: Vec<Dep>,
     #[serde(default)]
     pub deps: Vec<Dep>,
-    pub name: String,
 }
 
 impl Cfg {
@@ -31,24 +36,34 @@ impl Cfg {
     }
 }
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Dep {
+    pub name: Option<String>,
+    pub repo: String,
     #[serde(flatten)]
-    pub lock_unit: LockUnit,
-    name: Option<String>,
+    pub dep_type: Option<DepType>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DepType {
+    Branch(String),
+    Commit(String),
+    Version(semver::VersionReq),
 }
 
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Hash, Clone)]
-#[serde(untagged)]
-pub enum LockUnit {
-    Commit {
-        commit: String,
-        repo: String,
-    },
-    Rolling {
-        branch: Option<String>,
-        repo: String,
-    },
+pub struct LockUnit {
+    repo: String,
+    #[serde(flatten)]
+    pub lock_type: LockType,
+}
+
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Hash, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum LockType {
+    Branch(String),
+    Commit(String),
 }
 
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Hash)]
@@ -65,25 +80,32 @@ pub struct BuildUnit {
 /// Returns all deps, which must be contained in ``deps_dir``
 /// according to cfg and its transitive deps, and sccs of deps and root
 /// project in reverse topological order.
-pub fn install(
+pub fn install<T: std::io::Write>(
     cfg_dir: &Path,
     deps_dir: &Path,
-    buffer: &mut impl std::io::Write,
+    registry: &HashMap<String, Vec<(Version, String)>, impl BuildHasher>,
+    installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
+    buffer: &mut T,
 ) -> Result<(Vec<LockUnit>, Vec<Vec<BuildUnit>>)> {
     let mut graph: Graph<(), ()> = Graph::new();
     let mut i_bimap = BiMap::new();
     let cfg_path = cfg_dir.join(CFG_FILE_NAME);
-    let mut deps = vec![];
+    let mut installed_deps = vec![];
+    let mut cfg = Cfg::from(&cfg_path)?;
+    let mut deps_to_install = cfg.deps;
+    deps_to_install.append(&mut cfg.dev_deps);
     install_h(
-        Cfg::from(&cfg_path)?.deps,
-        deps_dir,
         &cfg_path,
-        buffer,
         OsString::from("root"),
+        deps_dir,
+        deps_to_install,
+        registry,
+        &installer,
+        buffer,
         NodeIndex::from(0),
         &mut i_bimap,
         &mut graph,
-        &mut deps,
+        &mut installed_deps,
     )?;
     let sccs = petgraph::algo::kosaraju_scc(&graph)
         .iter()
@@ -93,18 +115,19 @@ pub fn install(
                 .collect()
         })
         .collect();
-    deps.sort_unstable();
-    deps.dedup();
-    Ok((deps, sccs))
+    installed_deps.sort_unstable();
+    installed_deps.dedup();
+    Ok((installed_deps, sccs))
 }
 
-#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
-fn install_h(
-    deps: Vec<Dep>,
-    deps_dir: &Path,
+fn install_h<T: std::io::Write>(
     cfg_path: &Path,
-    buffer: &mut impl std::io::Write,
     cfg_dir: OsString,
+    deps_dir: &Path,
+    deps: Vec<Dep>,
+    registry: &HashMap<String, Vec<(Version, String)>, impl BuildHasher>,
+    installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
+    buffer: &mut T,
     prev_i: NodeIndex,
     i_bimap: &mut BiMap<BuildUnit, NodeIndex>,
     graph: &mut Graph<(), ()>,
@@ -113,86 +136,39 @@ fn install_h(
     let mut vec_for_name_map = Vec::with_capacity(deps.len());
     let mut vec_to_trans_deps_install = Vec::with_capacity(deps.len());
     for dep in deps {
-        let dep_dir_name = dep_dir(&dep.lock_unit)?;
+        let lock = LockUnit {
+            lock_type: match dep
+                .dep_type
+                .unwrap_or(DepType::Branch("default".to_string()))
+            {
+                DepType::Version(version) => LockType::Commit(
+                    registry[&dep.repo]
+                        .iter()
+                        .rev()
+                        .find(|x| version.matches(&x.0))
+                        .with_context(|| format!("There is no {version:?} in {}", dep.repo))?
+                        .1
+                        .clone(),
+                ),
+                DepType::Branch(branch) => LockType::Branch(branch),
+                DepType::Commit(commit) => LockType::Commit(commit),
+            },
+            repo: dep.repo,
+        };
+        let dep_dir_name = dep_dir(&lock)?;
         let dep_dir_path = deps_dir.join(&dep_dir_name);
-        if !Path::new(&dep_dir_path).exists() {
-            match dep.lock_unit {
-                LockUnit::Commit {
-                    ref repo,
-                    ref commit,
-                } => {
-                    std::fs::create_dir(&dep_dir_path)?;
-                    with_stderr_and_context(
-                        &Command::new("git")
-                            .current_dir(&dep_dir_path)
-                            .arg("init")
-                            .arg("-q")
-                            .output()?,
-                        cfg_path,
-                        &dep.lock_unit,
-                    )?;
-                    with_stderr_and_context(
-                        &Command::new("git")
-                            .current_dir(&dep_dir_path)
-                            .arg("remote")
-                            .arg("add")
-                            .arg("origin")
-                            .arg(repo)
-                            .output()?,
-                        cfg_path,
-                        &dep.lock_unit,
-                    )?;
-                    with_stderr_and_context(
-                        &Command::new("git")
-                            .current_dir(&dep_dir_path)
-                            .arg("fetch")
-                            .arg("-q")
-                            .arg("--depth=1")
-                            .arg("origin")
-                            .arg(commit)
-                            .output()?,
-                        cfg_path,
-                        &dep.lock_unit,
-                    )?;
-                    with_stderr_and_context(
-                        &Command::new("git")
-                            .current_dir(&dep_dir_path)
-                            .arg("checkout")
-                            .arg("-q")
-                            .arg("FETCH_HEAD")
-                            .output()?,
-                        cfg_path,
-                        &dep.lock_unit,
-                    )?;
-                    writeln!(buffer, "{:?} was installed", dep.lock_unit)?;
-                }
-                LockUnit::Rolling {
-                    ref repo,
-                    ref branch,
-                } => {
-                    let mut command = Command::new("git");
-                    let mut command = command
-                        .current_dir(deps_dir)
-                        .arg("clone")
-                        .arg("-q")
-                        .arg("--depth=1")
-                        .arg(repo);
-                    if let Some(branch) = &branch {
-                        command = command.arg("-b").arg(branch);
-                    }
-                    with_stderr_and_context(
-                        &command.arg(&dep_dir_name).output()?,
-                        cfg_path,
-                        &dep.lock_unit,
-                    )?;
-                    writeln!(buffer, "{:?} was installed", dep.lock_unit)?;
-                }
-            }
-        }
+        installer(
+            cfg_path,
+            deps_dir,
+            &dep_dir_path,
+            &dep_dir_name,
+            &lock,
+            buffer,
+        )?;
         let dep_cfg = Cfg::from(&dep_dir_path.join(CFG_FILE_NAME))?;
         vec_for_name_map.push((dep.name.unwrap_or(dep_cfg.name), dep_dir_name.clone()));
         vec_to_trans_deps_install.push((dep_cfg.deps, dep_dir_name, dep_dir_path));
-        locks.push(dep.lock_unit);
+        locks.push(lock);
     }
     let mut name_map = BTreeMap::new();
     for (dep_name, dep_dir) in vec_for_name_map {
@@ -218,11 +194,13 @@ fn install_h(
         graph.add_edge(prev_i, i, ());
         for (dep_deps, dep_dir_name, dep_dir_path) in vec_to_trans_deps_install {
             install_h(
-                dep_deps,
-                deps_dir,
                 &dep_dir_path,
-                buffer,
                 dep_dir_name,
+                deps_dir,
+                dep_deps,
+                registry,
+                installer,
+                buffer,
                 i,
                 i_bimap,
                 graph,
@@ -230,6 +208,81 @@ fn install_h(
             )?;
         }
     }
+    Ok(())
+}
+
+pub fn net_installer(
+    cfg_path: &Path,
+    deps_dir: &Path,
+    dep_dir_path: &Path,
+    dep_dir_name: &OsString,
+    lock: &LockUnit,
+    buffer: &mut impl std::io::Write,
+) -> Result<()> {
+    if !Path::new(dep_dir_path).exists() {
+        match lock.lock_type {
+            LockType::Commit(ref commit) => {
+                std::fs::create_dir(dep_dir_path)?;
+                with_stderr_and_context(
+                    &Command::new("git")
+                        .current_dir(dep_dir_path)
+                        .arg("init")
+                        .arg("-q")
+                        .output()?,
+                    cfg_path,
+                    lock,
+                )?;
+                with_stderr_and_context(
+                    &Command::new("git")
+                        .current_dir(dep_dir_path)
+                        .arg("remote")
+                        .arg("add")
+                        .arg("origin")
+                        .arg(&lock.repo)
+                        .output()?,
+                    cfg_path,
+                    lock,
+                )?;
+                with_stderr_and_context(
+                    &Command::new("git")
+                        .current_dir(dep_dir_path)
+                        .arg("fetch")
+                        .arg("-q")
+                        .arg("--depth=1")
+                        .arg("origin")
+                        .arg(commit)
+                        .output()?,
+                    cfg_path,
+                    lock,
+                )?;
+                with_stderr_and_context(
+                    &Command::new("git")
+                        .current_dir(dep_dir_path)
+                        .arg("checkout")
+                        .arg("-q")
+                        .arg("FETCH_HEAD")
+                        .output()?,
+                    cfg_path,
+                    lock,
+                )?;
+                writeln!(buffer, "{lock:?} was installed")?;
+            }
+            LockType::Branch(ref branch) => {
+                let mut command = Command::new("git");
+                let mut command = command
+                    .current_dir(deps_dir)
+                    .arg("clone")
+                    .arg("-q")
+                    .arg("--depth=1")
+                    .arg(&lock.repo);
+                if branch != "default" {
+                    command = command.arg("-b").arg(branch);
+                }
+                with_stderr_and_context(&command.arg(dep_dir_name).output()?, cfg_path, lock)?;
+                writeln!(buffer, "{lock:?} was installed")?;
+            }
+        }
+    };
     Ok(())
 }
 
@@ -276,24 +329,25 @@ pub fn clean(locks: &[LockUnit], deps_dir: &Path, buffer: &mut impl std::io::Wri
 }
 
 pub fn dep_dir(lock: &LockUnit) -> Result<OsString> {
-    match lock {
-        LockUnit::Commit { repo, commit } => {
-            let mut dir = OsString::from(repo_name(repo)?);
+    match &lock.lock_type {
+        LockType::Commit(commit) => {
+            let mut dir = OsString::from(repo_name(&lock.repo)?);
             dir.push(".commit");
             dir.push(".");
             dir.push(commit);
             Ok(dir)
         }
-        LockUnit::Rolling { repo, branch } => {
-            let mut dir = OsString::from(repo_name(repo)?);
+        LockType::Branch(branch) => {
+            let mut dir = OsString::from(repo_name(&lock.repo)?);
             dir.push(".rolling");
             dir.push(".");
-            dir.push(&branch.clone().unwrap_or("default".to_string()));
+            dir.push(&branch.clone());
             Ok(dir)
         }
     }
 }
 
+// NOTE: Author part is missed.
 fn repo_name(git_url: &str) -> Result<&str> {
     Ok(regex::Regex::new(r"/([^/]*)\.git")?
         .captures(git_url)
@@ -335,934 +389,4 @@ pub fn lock(lock_dir: &Path, deps: &[LockUnit]) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{fs, io::empty, path::Path};
-    use LockUnit::{Commit, Rolling};
-
-    #[test]
-    fn repo_name_t_1() {
-        assert_eq!(
-            repo_name("https://github.com/WinstonMDP/repo_name.git").unwrap(),
-            "repo_name"
-        );
-    }
-
-    #[test]
-    fn repo_name_t_2() {
-        assert_eq!(
-            repo_name("ssh://[user@]host.xz[:port]/~[user]/path/to/repo.git/").unwrap(),
-            "repo"
-        );
-    }
-
-    #[test]
-    fn repo_name_t_3() {
-        assert_eq!(
-            repo_name("https://github.com/WinstonMDP/repo-name.git").unwrap(),
-            "repo-name"
-        );
-    }
-
-    fn nfiles(dir: &Path) -> usize {
-        dir.read_dir().unwrap().collect::<Vec<_>>().len()
-    }
-
-    #[test]
-    fn install_t_1() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![Rolling {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    branch: None
-                }],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.default"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("githubOtherFiles.rolling.default")
-                        )])
-                    }]
-                ],
-            )
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert_eq!(nfiles(&deps_dir), 1);
-    }
-
-    #[test]
-    fn install_t_2() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            branch = "main"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![Rolling {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    branch: Some("main".to_string())
-                }],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.main"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("githubOtherFiles.rolling.main")
-                        )])
-                    }]
-                ]
-            )
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.main")
-        ));
-        assert_eq!(nfiles(&deps_dir), 1);
-    }
-
-    #[test]
-    fn install_t_3() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-
-            [[deps]]
-            name = "name_for_b"
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            branch = "b"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![
-                    Rolling {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: None
-                    },
-                    Rolling {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: Some("b".to_string())
-                    }
-                ],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.b"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.default"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([
-                            (
-                                "otherFiles".to_string(),
-                                OsString::from("githubOtherFiles.rolling.default"),
-                            ),
-                            (
-                                "name_for_b".to_string(),
-                                OsString::from("githubOtherFiles.rolling.b")
-                            )
-                        ])
-                    }]
-                ]
-            )
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert!(Path::exists(&deps_dir.join("githubOtherFiles.rolling.b")));
-        assert_eq!(nfiles(&deps_dir), 2);
-    }
-
-    #[test]
-    fn install_t_4() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            branch = "with_dependencies"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![
-                    Rolling {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: None
-                    },
-                    Rolling {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: Some("with_dependencies".to_string())
-                    },
-                ],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.default"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.with_dependencies"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("githubOtherFiles.rolling.default")
-                        )])
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "otherDependencies".to_string(),
-                            OsString::from("githubOtherFiles.rolling.with_dependencies")
-                        )])
-                    }]
-                ]
-            )
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.with_dependencies")
-        ));
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert_eq!(nfiles(&deps_dir), 2);
-    }
-
-    #[test]
-    fn install_t_5() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            commit = "909896f5646b7fd9f058dcd21961b8d5599dec3b"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![{
-                    Commit {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        commit: "909896f5646b7fd9f058dcd21961b8d5599dec3b".to_string(),
-                    }
-                }],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from(
-                            "githubOtherFiles.commit.909896f5646b7fd9f058dcd21961b8d5599dec3b"
-                        ),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from(
-                                "githubOtherFiles.commit.909896f5646b7fd9f058dcd21961b8d5599dec3b"
-                            )
-                        )])
-                    }]
-                ]
-            )
-        );
-        assert!(Path::exists(&deps_dir.join(
-            "githubOtherFiles.commit.909896f5646b7fd9f058dcd21961b8d5599dec3b"
-        )));
-        assert_eq!(nfiles(&deps_dir), 1);
-    }
-
-    #[test]
-    fn install_t_6() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            name = "commit_package"
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            commit = "30cfb86f4e76810eedc1d8d57167289a2b63b4ac"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![
-                    Commit {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        commit: "30cfb86f4e76810eedc1d8d57167289a2b63b4ac".to_string()
-                    },
-                    Rolling {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: None
-                    },
-                ],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.default"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from(
-                            "githubOtherFiles.commit.30cfb86f4e76810eedc1d8d57167289a2b63b4ac"
-                        ),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("githubOtherFiles.rolling.default")
-                        )])
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "commit_package".to_string(),
-                            OsString::from(
-                                "githubOtherFiles.commit.30cfb86f4e76810eedc1d8d57167289a2b63b4ac"
-                            )
-                        )])
-                    }]
-                ]
-            )
-        );
-        let commit_dep_dir =
-            deps_dir.join("githubOtherFiles.commit.30cfb86f4e76810eedc1d8d57167289a2b63b4ac");
-        assert!(Path::exists(&commit_dep_dir));
-        assert_eq!(
-            fs::read_to_string(commit_dep_dir.join(CFG_FILE_NAME)).unwrap(),
-            r#"name = "otherFiles"
-
-[[deps]]
-repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-"#
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert_eq!(nfiles(&deps_dir), 2);
-    }
-
-    #[test]
-    fn install_t_7() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![Rolling {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    branch: None
-                }],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.default"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("githubOtherFiles.rolling.default")
-                        )])
-                    }]
-                ]
-            )
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert!(!Path::exists(&deps_dir.join("githubOtherFiles.rolling.b")));
-        assert_eq!(nfiles(&deps_dir), 1);
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            branch = "b"
-            "#,
-        )
-        .unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![Rolling {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    branch: Some("b".to_string())
-                }],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.b"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("githubOtherFiles.rolling.b")
-                        )])
-                    }]
-                ]
-            )
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert!(Path::exists(&deps_dir.join("githubOtherFiles.rolling.b")));
-        assert_eq!(nfiles(&deps_dir), 2);
-    }
-
-    #[test]
-    fn install_t_8() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![Rolling {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    branch: None
-                }],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.default"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("githubOtherFiles.rolling.default")
-                        )])
-                    }]
-                ]
-            )
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert_eq!(nfiles(&deps_dir), 1);
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![Rolling {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    branch: None
-                }],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.default"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("githubOtherFiles.rolling.default")
-                        )])
-                    }]
-                ]
-            )
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert_eq!(nfiles(&deps_dir), 1);
-    }
-
-    #[test]
-    fn install_t_9() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![Rolling {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    branch: None
-                }],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.default"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("githubOtherFiles.rolling.default")
-                        )])
-                    }]
-                ]
-            )
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert_eq!(nfiles(&deps_dir), 1);
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            branch = "with_dependencies"
-            "#,
-        )
-        .unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![
-                    Rolling {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: None
-                    },
-                    Rolling {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: Some("with_dependencies".to_string())
-                    },
-                ],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.default"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.with_dependencies"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("githubOtherFiles.rolling.default")
-                        )])
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "otherDependencies".to_string(),
-                            OsString::from("githubOtherFiles.rolling.with_dependencies")
-                        )])
-                    }]
-                ]
-            )
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.with_dependencies")
-        ));
-        assert_eq!(nfiles(&deps_dir), 2);
-    }
-
-    #[test]
-    #[allow(clippy::too_many_lines)]
-    fn install_t_10() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            branch = "with_dependencies"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            branch = "with_dependencies"
-            "#,
-        )
-        .unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![
-                    Rolling {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: None
-                    },
-                    Rolling {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: Some("with_dependencies".to_string())
-                    },
-                ],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.default"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.with_dependencies"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("githubOtherFiles.rolling.default")
-                        )])
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "otherDependencies".to_string(),
-                            OsString::from("githubOtherFiles.rolling.with_dependencies")
-                        )])
-                    }]
-                ]
-            )
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.with_dependencies")
-        ));
-        assert_eq!(nfiles(&deps_dir), 2);
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            branch = "with_dependencies"
-            "#,
-        )
-        .unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![
-                    Rolling {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: None
-                    },
-                    Rolling {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: Some("with_dependencies".to_string())
-                    },
-                ],
-                vec![
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.default"),
-                        name_map: BTreeMap::new()
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("githubOtherFiles.rolling.with_dependencies"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("githubOtherFiles.rolling.default")
-                        )])
-                    }],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "otherDependencies".to_string(),
-                            OsString::from("githubOtherFiles.rolling.with_dependencies")
-                        )])
-                    }]
-                ]
-            )
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.with_dependencies")
-        ));
-        assert_eq!(nfiles(&deps_dir), 2);
-    }
-
-    #[test]
-    fn install_t_11() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp_dir.path().join(CFG_FILE_NAME),
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            name = "cycle"
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            branch = "cyclic_1"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        assert_eq!(
-            install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap(),
-            (
-                vec![
-                    Rolling {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: Some("cyclic_1".to_string())
-                    },
-                    Rolling {
-                        repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                        branch: Some("cyclic_2".to_string())
-                    },
-                ],
-                vec![
-                    vec![
-                        BuildUnit {
-                            dir: OsString::from("githubOtherFiles.rolling.cyclic_1"),
-                            name_map: BTreeMap::from([(
-                                "otherFiles".to_string(),
-                                OsString::from("githubOtherFiles.rolling.cyclic_2")
-                            )])
-                        },
-                        BuildUnit {
-                            dir: OsString::from("githubOtherFiles.rolling.cyclic_2"),
-                            name_map: BTreeMap::from([(
-                                "otherFiles".to_string(),
-                                OsString::from("githubOtherFiles.rolling.cyclic_1")
-                            )])
-                        },
-                    ],
-                    vec![BuildUnit {
-                        dir: OsString::from("root"),
-                        name_map: BTreeMap::from([(
-                            "cycle".to_string(),
-                            OsString::from("githubOtherFiles.rolling.cyclic_1")
-                        )])
-                    }]
-                ]
-            )
-        );
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.cyclic_1")
-        ));
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.cyclic_2")
-        ));
-        assert_eq!(nfiles(&deps_dir), 2);
-    }
-
-    #[test]
-    fn install_t_12() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        let cfg = tmp_dir.path().join(CFG_FILE_NAME);
-        fs::write(
-            cfg,
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            branch = "b"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap_err();
-    }
-
-    #[test]
-    fn clean_t_1() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        let cfg = tmp_dir.path().join(CFG_FILE_NAME);
-        fs::write(
-            &cfg,
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        lock(
-            tmp_dir.path(),
-            &install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap().0,
-        )
-        .unwrap();
-        fs::write(
-            cfg,
-            r#"
-            name = "package_name"
-            "#,
-        )
-        .unwrap();
-        lock(
-            tmp_dir.path(),
-            &install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap().0,
-        )
-        .unwrap();
-        clean(
-            &locked_deps(tmp_dir.path()).unwrap(),
-            &deps_dir,
-            &mut empty(),
-        )
-        .unwrap();
-        assert!(!Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert_eq!(nfiles(&deps_dir), 0);
-    }
-
-    #[test]
-    fn clean_t_2() {
-        let tmp_dir = tempfile::tempdir().unwrap();
-        let cfg = tmp_dir.path().join(CFG_FILE_NAME);
-        fs::write(
-            &cfg,
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-
-            [[deps]]
-            name = "package_name_to_clean"
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            branch = "b"
-            "#,
-        )
-        .unwrap();
-        let deps_dir = tmp_dir.path().join("deps");
-        fs::create_dir(&deps_dir).unwrap();
-        lock(
-            tmp_dir.path(),
-            &install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap().0,
-        )
-        .unwrap();
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        fs::write(
-            cfg,
-            r#"
-            name = "package_name"
-
-            [[deps]]
-            repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-            "#,
-        )
-        .unwrap();
-        lock(
-            tmp_dir.path(),
-            &install(tmp_dir.path(), &deps_dir, &mut empty()).unwrap().0,
-        )
-        .unwrap();
-        clean(
-            &locked_deps(tmp_dir.path()).unwrap(),
-            &deps_dir,
-            &mut empty(),
-        )
-        .unwrap();
-        assert!(Path::exists(
-            &deps_dir.join("githubOtherFiles.rolling.default")
-        ));
-        assert!(!Path::exists(&deps_dir.join("githubOtherFiles.b.rolling")));
-        assert_eq!(nfiles(&deps_dir), 1);
-    }
-}
+mod tests;

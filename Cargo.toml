@@ -7,6 +7,7 @@ edition = "2021"
 pedantic = "warn"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+too_many_arguments = "allow"
 
 [dependencies]
 anyhow = "1.0.75"
@@ -14,6 +15,7 @@ bimap = "0.6.3"
 clap = { version = "4.4.8", features = ["derive"] }
 petgraph = "0.6.4"
 regex = "1.10.2"
+semver = { version = "1.0.22", features = ["serde"] }
 serde = { version = "1.0.192", features = ["derive"] }
 serde_json = "1.0.113"
 toml = "0.8.8"
