@@ -1,5 +1,3 @@
-// TODO: dev-deps
-
 use anyhow::{anyhow, ensure, Context, Result};
 use bimap::BiMap;
 use petgraph::{prelude::NodeIndex, Graph};
@@ -9,7 +7,6 @@ use std::{
     collections::{BTreeMap, HashMap},
     ffi::OsString,
     fs,
-    hash::BuildHasher,
     path::Path,
     process::Command,
 };
@@ -72,9 +69,9 @@ pub struct BuildUnit {
     name_map: BTreeMap<String, OsString>,
 }
 
-/// Clone rolling deps in ``<repo_name>.rolling.<branch>`` dirs and
+/// Clone branch deps in ``<repo_author>.<repo_name>.branch.<branch>`` dirs and
 /// checkout to the respective branch.
-/// Clone commit deps in ``<repo_name>.commit.<commit>`` dirs and
+/// Clone commit deps in ``<repo_author>.<repo_name>.commit.<commit>`` dirs and
 /// checkout to the respective commits.
 /// Clone only those repositories, which aren't in ``deps_dir``.
 /// Returns all deps, which must be contained in ``deps_dir``
@@ -83,7 +80,6 @@ pub struct BuildUnit {
 pub fn install<T: std::io::Write>(
     cfg_dir: &Path,
     deps_dir: &Path,
-    registry: &HashMap<String, Vec<(Version, String)>, impl BuildHasher>,
     installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
     buffer: &mut T,
 ) -> Result<(Vec<LockUnit>, Vec<Vec<BuildUnit>>)> {
@@ -99,13 +95,13 @@ pub fn install<T: std::io::Write>(
         OsString::from("root"),
         deps_dir,
         deps_to_install,
-        registry,
         &installer,
         buffer,
         NodeIndex::from(0),
         &mut i_bimap,
         &mut graph,
         &mut installed_deps,
+        &mut HashMap::new(),
     )?;
     let sccs = petgraph::algo::kosaraju_scc(&graph)
         .iter()
@@ -125,13 +121,13 @@ fn install_h<T: std::io::Write>(
     cfg_dir: OsString,
     deps_dir: &Path,
     deps: Vec<Dep>,
-    registry: &HashMap<String, Vec<(Version, String)>, impl BuildHasher>,
     installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
     buffer: &mut T,
     prev_i: NodeIndex,
     i_bimap: &mut BiMap<BuildUnit, NodeIndex>,
     graph: &mut Graph<(), ()>,
     locks: &mut Vec<LockUnit>,
+    existing_versions: &mut HashMap<String, Vec<(Version, String)>>,
 ) -> Result<()> {
     let mut vec_for_name_map = Vec::with_capacity(deps.len());
     let mut vec_to_trans_deps_install = Vec::with_capacity(deps.len());
@@ -142,7 +138,9 @@ fn install_h<T: std::io::Write>(
                 .unwrap_or(DepType::Branch("default".to_string()))
             {
                 DepType::Version(version) => LockType::Commit(
-                    registry[&dep.repo]
+                    existing_versions
+                        .entry(dep.repo.clone())
+                        .or_insert(tags(&dep.repo)?)
                         .iter()
                         .rev()
                         .find(|x| version.matches(&x.0))
@@ -198,17 +196,37 @@ fn install_h<T: std::io::Write>(
                 dep_dir_name,
                 deps_dir,
                 dep_deps,
-                registry,
                 installer,
                 buffer,
                 i,
                 i_bimap,
                 graph,
                 locks,
+                existing_versions,
             )?;
         }
     }
     Ok(())
+}
+
+fn tags(repo: &str) -> Result<Vec<(Version, String)>> {
+    Ok(std::str::from_utf8(
+        &Command::new("git")
+            .arg("ls-remote")
+            .arg("--tags")
+            .arg(repo)
+            .output()?
+            .stdout,
+    )?
+    .lines()
+    .filter_map(|x| {
+        let captures = regex::Regex::new(r"(\w*)\s.*v(.*)").ok()?.captures(x)?;
+        Some((
+            Version::parse(captures.get(2)?.as_str()).ok()?,
+            captures.get(1)?.as_str().to_string(),
+        ))
+    })
+    .collect())
 }
 
 pub fn net_installer(
@@ -331,15 +349,15 @@ pub fn clean(locks: &[LockUnit], deps_dir: &Path, buffer: &mut impl std::io::Wri
 pub fn dep_dir(lock: &LockUnit) -> Result<OsString> {
     match &lock.lock_type {
         LockType::Commit(commit) => {
-            let mut dir = OsString::from(repo_name(&lock.repo)?);
+            let mut dir = OsString::from(repo_author_and_name(&lock.repo)?);
             dir.push(".commit");
             dir.push(".");
             dir.push(commit);
             Ok(dir)
         }
         LockType::Branch(branch) => {
-            let mut dir = OsString::from(repo_name(&lock.repo)?);
-            dir.push(".rolling");
+            let mut dir = OsString::from(repo_author_and_name(&lock.repo)?);
+            dir.push(".branch");
             dir.push(".");
             dir.push(&branch.clone());
             Ok(dir)
@@ -347,18 +365,16 @@ pub fn dep_dir(lock: &LockUnit) -> Result<OsString> {
     }
 }
 
-// NOTE: Author part is missed.
-fn repo_name(git_url: &str) -> Result<&str> {
-    Ok(regex::Regex::new(r"/([^/]*)\.git")?
+fn repo_author_and_name(git_url: &str) -> Result<String> {
+    let captures = regex::Regex::new(r"([\w-]*)\/([\w-]*)\.git")?
         .captures(git_url)
-        .ok_or_else(|| {
-            anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.")
-        })?
-        .get(1)
-        .ok_or_else(|| {
-            anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.")
-        })?
-        .as_str())
+        .ok_or_else(|| { anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.") })?;
+    Ok(captures.get(1).ok_or_else(|| { anyhow!("Can't capture author name in \"{git_url}\".") })? .as_str().to_string()
+        +
+        "."
+        +
+        captures.get(2).ok_or_else(|| { anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.") })?.as_str()
+    )
 }
 
 /// Content of ``LOCK_FILE_NAME`` file.

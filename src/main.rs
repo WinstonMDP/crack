@@ -1,11 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use std::{
-    collections::HashMap,
-    fs,
-    io::Write,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, fs, io::Write, path::Path};
 
 #[derive(clap::Parser)]
 #[command(about = "A Sanskrit package manager", long_about = None)]
@@ -20,6 +15,8 @@ pub enum Subcommand {
     I,
     /// Install new deps and update all deps.
     U,
+    /// Update registry.
+    Ur,
     /// Delete directories, which aren't in crack.lock.
     C,
     /// Create empty project
@@ -34,29 +31,21 @@ pub enum Subcommand {
     Ad { dev_dep_name: String },
 }
 
-fn registry_dir() -> Result<PathBuf> {
-    let registry_dir = Path::new(&std::env::var("HOME")?).join(".crack");
-    if !registry_dir.exists() {
-        fs::create_dir(&registry_dir)?;
-    }
-    Ok(registry_dir)
+fn registry() -> Result<HashMap<String, String>> {
+    Ok(toml::from_str(&fs::read_to_string(
+        Path::new(&std::env::var("HOME")?)
+            .join(".crack")
+            .join("names.toml"),
+    )?)?)
 }
 
 fn install(project_root: &Path, deps_dir: &Path) -> Result<()> {
     if !deps_dir.exists() {
         fs::create_dir_all(deps_dir)?;
     }
-    let registry_dir = registry_dir()?;
-    let registry_versions = registry_dir.join("registry.toml");
-    if !registry_versions.exists() {
-        fs::write(&registry_versions, String::new())?;
-    }
     let installed = crack::install(
         project_root,
         deps_dir,
-        &toml::from_str::<HashMap<String, Vec<(semver::Version, String)>>>(&fs::read_to_string(
-            registry_versions,
-        )?)?,
         &crack::net_installer,
         &mut std::io::stdout(),
     )?;
@@ -82,11 +71,6 @@ fn project_root() -> Result<std::path::PathBuf> {
 }
 
 fn add(dep_name: &str, dev_deps: bool) -> Result<()> {
-    let registry_dir = registry_dir()?;
-    let registry_names = registry_dir.join("names.toml");
-    if !registry_names.exists() {
-        fs::write(&registry_names, "")?;
-    }
     fs::OpenOptions::new()
         .append(true)
         .open(project_root()?.join(crack::CFG_FILE_NAME))?
@@ -94,9 +78,7 @@ fn add(dep_name: &str, dev_deps: bool) -> Result<()> {
             (format!("\n[[{}deps]]\n", if dev_deps {"dev_"} else {""}) // TODO: hardcode [[deps]]
                 + &toml::to_string(&crack::Dep {
                     name: None,
-                    repo: toml::from_str::<HashMap<String, String>>(&fs::read_to_string(
-                        &registry_names,
-                    )?)?
+                    repo: registry()?
                     .remove(dep_name)
                     .with_context(|| format!("There is no {dep_name} in the registry."))?,
                     dep_type: None,
@@ -159,6 +141,19 @@ fn main() -> Result<()> {
         Subcommand::R => todo!(),
         Subcommand::A { dep_name } => add(&dep_name, false)?,
         Subcommand::Ad { dev_dep_name } => add(&dev_dep_name, true)?,
+        Subcommand::Ur => {
+            let registry_dir = Path::new(&std::env::var("HOME")?).join(".crack");
+            if !registry_dir.exists() {
+                fs::create_dir(&registry_dir)?;
+            }
+            fs::write(
+                registry_dir.join("names.toml"),
+                reqwest::blocking::get(
+                    "https://gist.githubusercontent.com/WinstonMDP/2a7e34b7c9a514d20d13a41773b3defc/raw/d9b529ca18d2be2a00270dc3f1c141e7ecbf82c2/registry.toml"
+                )?
+                .text()?,
+            )?;
+        }
     };
     Ok(())
 }
