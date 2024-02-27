@@ -24,7 +24,7 @@ pub struct Cfg {
 }
 
 impl Cfg {
-    fn from(path: &Path) -> Result<Cfg> {
+    pub fn from(path: &Path) -> Result<Cfg> {
         toml::from_str(
             &fs::read_to_string(path)
                 .with_context(|| format!("Failed with {path:#?} cfg file."))?,
@@ -33,20 +33,30 @@ impl Cfg {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct Dep {
     pub name: Option<String>,
     pub repo: String,
     #[serde(flatten)]
     pub dep_type: Option<DepType>,
+    pub options: Option<Vec<String>>,
+    pub optional: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum DepType {
     Branch(String),
     Commit(String),
     Version(semver::VersionReq),
+}
+
+#[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
+pub struct LockFile {
+    pub root_deps: Vec<Dep>,
+    pub root_options: Vec<String>,
+    #[serde(default)]
+    pub locks: Vec<LockUnit>,
 }
 
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Hash, Clone)]
@@ -69,6 +79,20 @@ pub struct BuildUnit {
     name_map: BTreeMap<String, OsString>,
 }
 
+pub fn install_cfg<T: std::io::Write>(
+    cfg_dir: &Path,
+    deps_dir: &Path,
+    options: &[String],
+    installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
+    buffer: &mut T,
+) -> Result<()> {
+    let cfg = Cfg::from(&cfg_dir.join(CFG_FILE_NAME))?;
+    let mut deps = cfg.deps;
+    deps.append(&mut cfg.dev_deps.clone());
+    install(cfg_dir, deps_dir, deps, options, &installer, buffer)?;
+    Ok(())
+}
+
 /// Clone branch deps in ``<repo_author>.<repo_name>.branch.<branch>`` dirs and
 /// checkout to the respective branch.
 /// Clone commit deps in ``<repo_author>.<repo_name>.commit.<commit>`` dirs and
@@ -80,21 +104,29 @@ pub struct BuildUnit {
 pub fn install<T: std::io::Write>(
     cfg_dir: &Path,
     deps_dir: &Path,
+    deps: Vec<Dep>,
+    options: &[String],
     installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
     buffer: &mut T,
-) -> Result<(Vec<LockUnit>, Vec<Vec<BuildUnit>>)> {
+) -> Result<()> {
+    if !deps_dir.exists() {
+        fs::create_dir_all(deps_dir)?;
+    }
     let mut graph: Graph<(), ()> = Graph::new();
     let mut i_bimap = BiMap::new();
     let cfg_path = cfg_dir.join(CFG_FILE_NAME);
     let mut installed_deps = vec![];
-    let mut cfg = Cfg::from(&cfg_path)?;
-    let mut deps_to_install = cfg.deps;
-    deps_to_install.append(&mut cfg.dev_deps);
+    let mut lock_file = LockFile {
+        root_deps: deps.clone(),
+        root_options: options.to_vec(),
+        locks: vec![],
+    };
     install_h(
         &cfg_path,
         OsString::from("root"),
         deps_dir,
-        deps_to_install,
+        deps,
+        options,
         &installer,
         buffer,
         NodeIndex::from(0),
@@ -103,7 +135,7 @@ pub fn install<T: std::io::Write>(
         &mut installed_deps,
         &mut HashMap::new(),
     )?;
-    let sccs = petgraph::algo::kosaraju_scc(&graph)
+    let sccs: Vec<Vec<BuildUnit>> = petgraph::algo::kosaraju_scc(&graph)
         .iter()
         .map(|x| {
             x.iter()
@@ -113,7 +145,18 @@ pub fn install<T: std::io::Write>(
         .collect();
     installed_deps.sort_unstable();
     installed_deps.dedup();
-    Ok((installed_deps, sccs))
+    lock_file.locks = installed_deps;
+    fs::write(
+        cfg_dir.join(LOCK_FILE_NAME),
+        toml::to_string(&lock_file).with_context(|| {
+            format!("Failed with {:#?} lock file.", cfg_dir.join(LOCK_FILE_NAME))
+        })?,
+    )?;
+    fs::write(
+        cfg_dir.join("crack.build"),
+        serde_json::to_string(&sccs).context("Failed with crack.build file.")?,
+    )?;
+    Ok(())
 }
 
 fn install_h<T: std::io::Write>(
@@ -121,6 +164,7 @@ fn install_h<T: std::io::Write>(
     cfg_dir: OsString,
     deps_dir: &Path,
     deps: Vec<Dep>,
+    options: &[String],
     installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
     buffer: &mut T,
     prev_i: NodeIndex,
@@ -132,6 +176,11 @@ fn install_h<T: std::io::Write>(
     let mut vec_for_name_map = Vec::with_capacity(deps.len());
     let mut vec_to_trans_deps_install = Vec::with_capacity(deps.len());
     for dep in deps {
+        if let Some(option_name) = dep.optional {
+            if !options.contains(&option_name) {
+                continue;
+            }
+        }
         let lock = LockUnit {
             lock_type: match dep
                 .dep_type
@@ -165,7 +214,7 @@ fn install_h<T: std::io::Write>(
         )?;
         let dep_cfg = Cfg::from(&dep_dir_path.join(CFG_FILE_NAME))?;
         vec_for_name_map.push((dep.name.unwrap_or(dep_cfg.name), dep_dir_name.clone()));
-        vec_to_trans_deps_install.push((dep_cfg.deps, dep_dir_name, dep_dir_path));
+        vec_to_trans_deps_install.push((dep_cfg.deps, dep_dir_name, dep_dir_path, dep.options));
         locks.push(lock);
     }
     let mut name_map = BTreeMap::new();
@@ -190,12 +239,13 @@ fn install_h<T: std::io::Write>(
     };
     if !contains_edge {
         graph.add_edge(prev_i, i, ());
-        for (dep_deps, dep_dir_name, dep_dir_path) in vec_to_trans_deps_install {
+        for (dep_deps, dep_dir_name, dep_dir_path, options) in vec_to_trans_deps_install {
             install_h(
                 &dep_dir_path,
                 dep_dir_name,
                 deps_dir,
                 dep_deps,
+                &options.unwrap_or(vec![]),
                 installer,
                 buffer,
                 i,
@@ -378,30 +428,21 @@ fn repo_author_and_name(git_url: &str) -> Result<String> {
 }
 
 /// Content of ``LOCK_FILE_NAME`` file.
-pub fn locked_deps(lock_file_dir: &Path) -> Result<Vec<LockUnit>> {
+pub fn lock_file(lock_file_dir: &Path) -> Result<LockFile> {
     let lock_file = lock_file_dir.join(LOCK_FILE_NAME);
-    if lock_file.exists() {
-        toml::from_str::<HashMap<String, Vec<LockUnit>>>(
+    Ok(if lock_file.exists() {
+        toml::from_str(
             &fs::read_to_string(&lock_file)
                 .with_context(|| format!("Failed with {lock_file:#?} lock file."))?,
         )
         .with_context(|| format!("Failed with {lock_file:#?} lock file."))?
-        .remove("deps")
-        .ok_or_else(|| anyhow!("There isn't deps field in {lock_file:#?} lock file."))
     } else {
-        Ok(vec![])
-    }
-}
-
-/// Write deps to ``LOCK_FILE_NAME`` file.
-pub fn lock(lock_dir: &Path, deps: &[LockUnit]) -> Result<()> {
-    let lock_file = lock_dir.join(LOCK_FILE_NAME);
-    fs::write(
-        &lock_file,
-        toml::to_string(&HashMap::from([("deps", deps)]))
-            .with_context(|| format!("Failed with {lock_file:#?} lock file."))?,
-    )?;
-    Ok(())
+        LockFile {
+            root_deps: vec![],
+            root_options: vec![],
+            locks: vec![],
+        }
+    })
 }
 
 #[cfg(test)]

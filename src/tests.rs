@@ -143,6 +143,15 @@ fn stub_installer(
                         repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
                     "#
                     }
+                    "optional_branch" => {
+                        r#"
+                        name = "otherFiles"
+
+                        [[deps]]
+                        repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+                        optional = "option"
+                        "#
+                    }
                     _ => todo!(),
                 },
                 Commit(commit) => match commit.as_str() {
@@ -168,6 +177,10 @@ fn nfiles(dir: &Path) -> usize {
     dir.read_dir().unwrap().collect::<Vec<_>>().len()
 }
 
+fn build_file(dir: &Path) -> Vec<Vec<BuildUnit>> {
+    serde_json::from_str(&fs::read_to_string(dir.join("crack.build")).unwrap()).unwrap()
+}
+
 #[test]
 fn install_t_1() {
     let tmp_dir = tempfile::tempdir().unwrap();
@@ -182,54 +195,71 @@ fn install_t_1() {
     )
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
-    fs::create_dir(&deps_dir).unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![LockUnit {
-                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                lock_type: Branch("default".to_string())
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![LockUnit {
+            repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+            lock_type: Branch("default".to_string())
+        }],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
+                name_map: BTreeMap::new()
             }],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.default")
-                    )])
-                }]
-            ]
-        )
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.default")
+                )])
+            }]
+        ]
     );
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.default")
     ));
     assert_eq!(nfiles(&deps_dir), 1);
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![LockUnit {
-                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                lock_type: Branch("default".to_string())
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![LockUnit {
+            repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+            lock_type: Branch("default".to_string())
+        }],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
+                name_map: BTreeMap::new()
             }],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.default")
-                    )])
-                }]
-            ]
-        )
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.default")
+                )])
+            }]
+        ]
     );
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.default")
@@ -253,27 +283,36 @@ fn install_t_2() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![LockUnit {
-                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                lock_type: Branch("main".to_string())
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![LockUnit {
+            repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+            lock_type: Branch("main".to_string())
+        }],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.main"),
+                name_map: BTreeMap::new()
             }],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.main"),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.main")
-                    )])
-                }]
-            ]
-        )
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.main")
+                )])
+            }]
+        ]
     );
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.main")
@@ -300,44 +339,52 @@ fn install_t_3() {
     )
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
-    fs::create_dir(&deps_dir).unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Branch("b".to_string())
-                },
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Branch("default".to_string())
-                },
-            ],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.b"),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([
-                        (
-                            "otherFiles".to_string(),
-                            OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
-                        ),
-                        (
-                            "name_for_b".to_string(),
-                            OsString::from("WinstonMDP.githubOtherFiles.branch.b")
-                        )
-                    ])
-                }]
-            ]
-        )
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("b".to_string())
+            },
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("default".to_string())
+            },
+        ],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.b"),
+                name_map: BTreeMap::new()
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
+                name_map: BTreeMap::new()
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([
+                    (
+                        "otherFiles".to_string(),
+                        OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
+                    ),
+                    (
+                        "name_for_b".to_string(),
+                        OsString::from("WinstonMDP.githubOtherFiles.branch.b")
+                    )
+                ])
+            }]
+        ]
     );
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.default")
@@ -365,40 +412,49 @@ fn install_t_4() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Branch("default".to_string())
-                },
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Branch("with_dependencies".to_string())
-                },
-            ],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.with_dependencies"),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.default")
-                    )])
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([(
-                        "otherDependencies".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.with_dependencies")
-                    )])
-                }]
-            ]
-        )
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("default".to_string())
+            },
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("with_dependencies".to_string())
+            },
+        ],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
+                name_map: BTreeMap::new()
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.with_dependencies"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.default")
+                )])
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherDependencies".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.with_dependencies")
+                )])
+            }]
+        ]
     );
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.default")
@@ -418,40 +474,49 @@ fn install_t_4() {
         "#,
     )
     .unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Branch("default".to_string())
-                },
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Branch("with_dependencies".to_string())
-                },
-            ],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.with_dependencies"),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.default")
-                    )])
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([(
-                        "otherDependencies".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.with_dependencies")
-                    )])
-                }]
-            ]
-        )
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("default".to_string())
+            },
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("with_dependencies".to_string())
+            },
+        ],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
+                name_map: BTreeMap::new()
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.with_dependencies"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.default")
+                )])
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherDependencies".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.with_dependencies")
+                )])
+            }]
+        ]
     );
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.default")
@@ -478,33 +543,42 @@ fn install_t_5() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![{
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Commit("909896f5646b7fd9f058dcd21961b8d5599dec3b".to_string()),
-                }
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![{
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Commit("909896f5646b7fd9f058dcd21961b8d5599dec3b".to_string()),
+            }
+        }],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from(
+                    "WinstonMDP.githubOtherFiles.commit.909896f5646b7fd9f058dcd21961b8d5599dec3b"
+                ),
+                name_map: BTreeMap::new()
             }],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from(
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from(
                         "WinstonMDP.githubOtherFiles.commit.909896f5646b7fd9f058dcd21961b8d5599dec3b"
-                    ),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from(
-                            "WinstonMDP.githubOtherFiles.commit.909896f5646b7fd9f058dcd21961b8d5599dec3b"
-                        )
-                    )])
-                }]
-            ]
-        )
+                    )
+                )])
+            }]
+        ]
     );
     assert!(Path::exists(&deps_dir.join(
         "WinstonMDP.githubOtherFiles.commit.909896f5646b7fd9f058dcd21961b8d5599dec3b"
@@ -529,44 +603,53 @@ fn install_t_6() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Branch("default".to_string())
-                },
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Commit("30cfb86f4e76810eedc1d8d57167289a2b63b4ac".to_string())
-                },
-            ],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from(
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("default".to_string())
+            },
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Commit("30cfb86f4e76810eedc1d8d57167289a2b63b4ac".to_string())
+            },
+        ],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
+                name_map: BTreeMap::new()
+            }],
+            vec![BuildUnit {
+                dir: OsString::from(
+                    "WinstonMDP.githubOtherFiles.commit.30cfb86f4e76810eedc1d8d57167289a2b63b4ac"
+                ),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.default")
+                )])
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "commit_package".to_string(),
+                    OsString::from(
                         "WinstonMDP.githubOtherFiles.commit.30cfb86f4e76810eedc1d8d57167289a2b63b4ac"
-                    ),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.default")
-                    )])
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([(
-                        "commit_package".to_string(),
-                        OsString::from(
-                            "WinstonMDP.githubOtherFiles.commit.30cfb86f4e76810eedc1d8d57167289a2b63b4ac"
-                        )
-                    )])
-                }]
-            ]
-        )
+                    )
+                )])
+            }]
+        ]
     );
     let commit_dep_dir = deps_dir
         .join("WinstonMDP.githubOtherFiles.commit.30cfb86f4e76810eedc1d8d57167289a2b63b4ac");
@@ -592,27 +675,36 @@ fn install_t_7() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![LockUnit {
-                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                lock_type: Branch("default".to_string())
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![LockUnit {
+            repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+            lock_type: Branch("default".to_string())
+        }],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
+                name_map: BTreeMap::new()
             }],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.default")
-                    )])
-                }]
-            ]
-        )
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.default")
+                )])
+            }]
+        ]
     );
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.default")
@@ -632,27 +724,36 @@ fn install_t_7() {
         "#,
     )
     .unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![LockUnit {
-                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                lock_type: Branch("b".to_string())
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![LockUnit {
+            repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+            lock_type: Branch("b".to_string())
+        }],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.b"),
+                name_map: BTreeMap::new()
             }],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.b"),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.b")
-                    )])
-                }]
-            ]
-        )
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.b")
+                )])
+            }]
+        ]
     );
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.default")
@@ -679,27 +780,36 @@ fn install_t_8() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![LockUnit {
-                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                lock_type: Branch("default".to_string())
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![LockUnit {
+            repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+            lock_type: Branch("default".to_string())
+        }],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
+                name_map: BTreeMap::new()
             }],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.default")
-                    )])
-                }]
-            ]
-        )
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.default")
+                )])
+            }]
+        ]
     );
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.default")
@@ -716,40 +826,49 @@ fn install_t_8() {
         "#,
     )
     .unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Branch("default".to_string())
-                },
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Branch("with_dependencies".to_string())
-                },
-            ],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.with_dependencies"),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.default")
-                    )])
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([(
-                        "otherDependencies".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.with_dependencies")
-                    )])
-                }]
-            ]
-        )
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("default".to_string())
+            },
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("with_dependencies".to_string())
+            },
+        ],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
+                name_map: BTreeMap::new()
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.with_dependencies"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.default")
+                )])
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherDependencies".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.with_dependencies")
+                )])
+            }]
+        ]
     );
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.default")
@@ -777,45 +896,54 @@ fn install_t_9() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("cyclic_1".to_string())
+            },
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("cyclic_2".to_string())
+            },
+        ],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
             vec![
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Branch("cyclic_1".to_string())
-                },
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Branch("cyclic_2".to_string())
-                },
-            ],
-            vec![
-                vec![
-                    BuildUnit {
-                        dir: OsString::from("WinstonMDP.githubOtherFiles.branch.cyclic_1"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("WinstonMDP.githubOtherFiles.branch.cyclic_2")
-                        )])
-                    },
-                    BuildUnit {
-                        dir: OsString::from("WinstonMDP.githubOtherFiles.branch.cyclic_2"),
-                        name_map: BTreeMap::from([(
-                            "otherFiles".to_string(),
-                            OsString::from("WinstonMDP.githubOtherFiles.branch.cyclic_1")
-                        )])
-                    },
-                ],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
+                BuildUnit {
+                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.cyclic_1"),
                     name_map: BTreeMap::from([(
-                        "cycle".to_string(),
+                        "otherFiles".to_string(),
+                        OsString::from("WinstonMDP.githubOtherFiles.branch.cyclic_2")
+                    )])
+                },
+                BuildUnit {
+                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.cyclic_2"),
+                    name_map: BTreeMap::from([(
+                        "otherFiles".to_string(),
                         OsString::from("WinstonMDP.githubOtherFiles.branch.cyclic_1")
                     )])
-                }]
-            ]
-        )
+                },
+            ],
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "cycle".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.cyclic_1")
+                )])
+            }]
+        ]
     );
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.cyclic_1")
@@ -846,7 +974,14 @@ fn install_t_10() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty()).unwrap_err();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap_err();
 }
 
 #[test]
@@ -865,33 +1000,42 @@ fn install_t_11() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![{
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Commit("909896f5646b7fd9f058dcd21961b8d5599dec3b".to_string()),
-                }
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![{
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Commit("909896f5646b7fd9f058dcd21961b8d5599dec3b".to_string()),
+            }
+        }],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from(
+                    "WinstonMDP.githubOtherFiles.commit.909896f5646b7fd9f058dcd21961b8d5599dec3b"
+                ),
+                name_map: BTreeMap::new()
             }],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from(
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from(
                         "WinstonMDP.githubOtherFiles.commit.909896f5646b7fd9f058dcd21961b8d5599dec3b"
-                    ),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from(
-                            "WinstonMDP.githubOtherFiles.commit.909896f5646b7fd9f058dcd21961b8d5599dec3b"
-                        )
-                    )])
-                }]
-            ]
-        )
+                    )
+                )])
+            }]
+        ]
     );
     assert!(Path::exists(&deps_dir.join(
         "WinstonMDP.githubOtherFiles.commit.909896f5646b7fd9f058dcd21961b8d5599dec3b"
@@ -915,7 +1059,14 @@ fn install_t_12() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty()).unwrap_err();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap_err();
 }
 
 #[test]
@@ -934,46 +1085,181 @@ fn install_t_13() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
     assert_eq!(
-        install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty(),).unwrap(),
-        (
-            vec![
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Branch("dev_dep".to_string())
-                },
-                LockUnit {
-                    repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
-                    lock_type: Branch("dev_dep_deps".to_string())
-                }
-            ],
-            vec![
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.dev_dep"),
-                    name_map: BTreeMap::new()
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("WinstonMDP.githubOtherFiles.branch.dev_dep_deps"),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.dev_dep")
-                    )])
-                }],
-                vec![BuildUnit {
-                    dir: OsString::from("root"),
-                    name_map: BTreeMap::from([(
-                        "otherFiles".to_string(),
-                        OsString::from("WinstonMDP.githubOtherFiles.branch.dev_dep_deps")
-                    )])
-                }]
-            ]
-        )
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("dev_dep".to_string())
+            },
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("dev_dep_deps".to_string())
+            }
+        ],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.dev_dep"),
+                name_map: BTreeMap::new()
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.dev_dep_deps"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.dev_dep")
+                )])
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.dev_dep_deps")
+                )])
+            }]
+        ]
     );
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.dev_dep_deps")
     ));
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.dev_dep")
+    ));
+    assert_eq!(nfiles(&deps_dir), 2);
+}
+
+#[test]
+fn install_t_14() {
+    let tmp_dir = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp_dir.path().join(CFG_FILE_NAME),
+        r#"
+        name = "package_name"
+
+        [[deps]]
+        repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+        branch = "optional_branch"
+        "#,
+    )
+    .unwrap();
+    let deps_dir = tmp_dir.path().join("deps");
+    fs::create_dir(&deps_dir).unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
+    assert_eq!(
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![LockUnit {
+            repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+            lock_type: Branch("optional_branch".to_string())
+        },],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.optional_branch"),
+                name_map: BTreeMap::new()
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.optional_branch")
+                )])
+            }]
+        ]
+    );
+    assert!(Path::exists(
+        &deps_dir.join("WinstonMDP.githubOtherFiles.branch.optional_branch")
+    ));
+    assert!(!Path::exists(
+        &deps_dir.join("WinstonMDP.githubOtherFiles.branch.default")
+    ));
+    assert_eq!(nfiles(&deps_dir), 1);
+}
+
+#[test]
+fn install_t_15() {
+    let tmp_dir = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp_dir.path().join(CFG_FILE_NAME),
+        r#"
+        name = "package_name"
+
+        [[deps]]
+        repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
+        branch = "optional_branch"
+        options = ["option"]
+        "#,
+    )
+    .unwrap();
+    let deps_dir = tmp_dir.path().join("deps");
+    fs::create_dir(&deps_dir).unwrap();
+    install_cfg(
+        tmp_dir.path(),
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
+    )
+    .unwrap();
+    assert_eq!(
+        lock_file(tmp_dir.path()).unwrap().locks,
+        vec![
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("default".to_string())
+            },
+            LockUnit {
+                repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
+                lock_type: Branch("optional_branch".to_string())
+            },
+        ],
+    );
+    assert_eq!(
+        build_file(tmp_dir.path()),
+        vec![
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.default"),
+                name_map: BTreeMap::new()
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("WinstonMDP.githubOtherFiles.branch.optional_branch"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.default")
+                )])
+            }],
+            vec![BuildUnit {
+                dir: OsString::from("root"),
+                name_map: BTreeMap::from([(
+                    "otherFiles".to_string(),
+                    OsString::from("WinstonMDP.githubOtherFiles.branch.optional_branch")
+                )])
+            }]
+        ]
+    );
+    assert!(Path::exists(
+        &deps_dir.join("WinstonMDP.githubOtherFiles.branch.optional_branch")
+    ));
+    assert!(Path::exists(
+        &deps_dir.join("WinstonMDP.githubOtherFiles.branch.default")
     ));
     assert_eq!(nfiles(&deps_dir), 2);
 }
@@ -994,11 +1280,12 @@ fn clean_t_1() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    lock(
+    install_cfg(
         tmp_dir.path(),
-        &install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty())
-            .unwrap()
-            .0,
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
     )
     .unwrap();
     fs::write(
@@ -1008,15 +1295,16 @@ fn clean_t_1() {
             "#,
     )
     .unwrap();
-    lock(
+    install_cfg(
         tmp_dir.path(),
-        &install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty())
-            .unwrap()
-            .0,
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
     )
     .unwrap();
     clean(
-        &locked_deps(tmp_dir.path()).unwrap(),
+        &lock_file(tmp_dir.path()).unwrap().locks,
         &deps_dir,
         &mut empty(),
     )
@@ -1048,11 +1336,12 @@ fn clean_t_2() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    lock(
+    install_cfg(
         tmp_dir.path(),
-        &install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty())
-            .unwrap()
-            .0,
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
     )
     .unwrap();
     assert!(Path::exists(
@@ -1068,15 +1357,16 @@ fn clean_t_2() {
             "#,
     )
     .unwrap();
-    lock(
+    install_cfg(
         tmp_dir.path(),
-        &install(tmp_dir.path(), &deps_dir, &stub_installer, &mut empty())
-            .unwrap()
-            .0,
+        &deps_dir,
+        &[],
+        &stub_installer,
+        &mut empty(),
     )
     .unwrap();
     clean(
-        &locked_deps(tmp_dir.path()).unwrap(),
+        &lock_file(tmp_dir.path()).unwrap().locks,
         &deps_dir,
         &mut empty(),
     )
