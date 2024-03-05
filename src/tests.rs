@@ -65,9 +65,9 @@ fn net_installer_t_2() {
 }
 
 #[test]
-fn tags_t_1() {
+fn version_tags_t_1() {
     assert_eq!(
-        tags("https://github.com/WinstonMDP/githubOtherFiles.git").unwrap(),
+        version_tags("https://github.com/WinstonMDP/githubOtherFiles.git").unwrap(),
         [
             (
                 Version::new(0, 3, 5),

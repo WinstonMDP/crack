@@ -191,7 +191,7 @@ fn install_h<T: std::io::Write>(
                 DepType::Version(version) => LockType::Commit(
                     existing_versions
                         .entry(dep.repo.clone())
-                        .or_insert(tags(&dep.repo)?)
+                        .or_insert(version_tags(&dep.repo)?)
                         .iter()
                         .rev()
                         .find(|x| version.matches(&x.0))
@@ -261,8 +261,8 @@ fn install_h<T: std::io::Write>(
     Ok(())
 }
 
-/// All version tags of a repo.
-fn tags(repo: &str) -> Result<Vec<(Version, String)>> {
+/// Return vec of (version, commit).
+fn version_tags(repo: &str) -> Result<Vec<(Version, String)>> {
     Ok(std::str::from_utf8(
         &Command::new("git")
             .arg("ls-remote")
