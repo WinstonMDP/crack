@@ -81,7 +81,7 @@ pub struct BuildUnit {
     name_map: BTreeMap<String, OsString>,
 }
 
-/// ``install``, but dependencies are from a cfg file.
+/// ``install``, but deps are from the cfg file.
 pub fn cfg_install<T: std::io::Write>(
     cfg_dir: &Path,
     deps_dir: &Path,
@@ -115,7 +115,7 @@ pub fn install<T: std::io::Write>(
     if !deps_dir.exists() {
         fs::create_dir_all(deps_dir)?;
     }
-    let mut graph: Graph<(), ()> = Graph::new();
+    let mut graph = Graph::new();
     let mut i_bimap = BiMap::new();
     let cfg_path = cfg_dir.join(CFG_FILE_NAME);
     let mut installed_deps = vec![];
@@ -261,7 +261,7 @@ fn install_h<T: std::io::Write>(
     Ok(())
 }
 
-/// Return vec of (version, commit).
+/// Return a vec of (version, commit).
 fn version_tags(repo: &str) -> Result<Vec<(Version, String)>> {
     Ok(std::str::from_utf8(
         &Command::new("git")
