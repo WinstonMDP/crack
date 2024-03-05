@@ -4,7 +4,7 @@ use petgraph::{prelude::NodeIndex, Graph};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     ffi::OsString,
     fs,
     path::Path,
@@ -13,18 +13,19 @@ use std::{
 
 pub const CFG_FILE_NAME: &str = "crack.toml";
 const LOCK_FILE_NAME: &str = "crack.lock";
+const BUILD_FILE_NAME: &str = "crack.build";
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Cfg {
-    pub name: String,
+    name: String,
     #[serde(default)]
-    pub dev_deps: Vec<Dep>,
+    dev_deps: Vec<Dep>,
     #[serde(default)]
-    pub deps: Vec<Dep>,
+    deps: Vec<Dep>,
 }
 
 impl Cfg {
-    pub fn from(path: &Path) -> Result<Cfg> {
+    fn from(path: &Path) -> Result<Cfg> {
         toml::from_str(
             &fs::read_to_string(path)
                 .with_context(|| format!("Failed with {path:#?} cfg file."))?,
@@ -33,7 +34,7 @@ impl Cfg {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Dep {
     pub name: Option<String>,
     pub repo: String,
@@ -43,7 +44,7 @@ pub struct Dep {
     pub optional: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum DepType {
     Branch(String),
@@ -51,38 +52,40 @@ pub enum DepType {
     Version(semver::VersionReq),
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct LockFile {
     pub root_deps: Vec<Dep>,
-    pub root_options: Vec<String>,
+    pub root_options: HashSet<String>,
     #[serde(default)]
     pub locks: Vec<LockUnit>,
 }
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Hash, Clone)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Clone, Hash)]
 pub struct LockUnit {
     repo: String,
     #[serde(flatten)]
     pub lock_type: LockType,
 }
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Hash, Clone)]
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Clone, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum LockType {
     Branch(String),
     Commit(String),
 }
 
+/// A unit of a ``BUILD_FILE_NAME`` file.
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Hash)]
 pub struct BuildUnit {
     dir: OsString,
     name_map: BTreeMap<String, OsString>,
 }
 
-pub fn install_cfg<T: std::io::Write>(
+/// ``install``, but dependencies are from a cfg file.
+pub fn cfg_install<T: std::io::Write>(
     cfg_dir: &Path,
     deps_dir: &Path,
-    options: &[String],
+    options: &HashSet<String>,
     installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
     buffer: &mut T,
 ) -> Result<()> {
@@ -98,14 +101,14 @@ pub fn install_cfg<T: std::io::Write>(
 /// Clone commit deps in ``<repo_author>.<repo_name>.commit.<commit>`` dirs and
 /// checkout to the respective commits.
 /// Clone only those repositories, which aren't in ``deps_dir``.
-/// Returns all deps, which must be contained in ``deps_dir``
-/// according to cfg and its transitive deps, and sccs of deps and root
-/// project in reverse topological order.
+/// Write all deps, which must be contained in ``deps_dir``
+/// according to ``deps`` and its transitive deps, to the ``LOCK_FILE_NAME`` file and
+/// sccs of deps and root project in reverse topological order to the ``BUILD_FILE_NAME`` file.
 pub fn install<T: std::io::Write>(
     cfg_dir: &Path,
     deps_dir: &Path,
     deps: Vec<Dep>,
-    options: &[String],
+    options: &HashSet<String>,
     installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
     buffer: &mut T,
 ) -> Result<()> {
@@ -118,7 +121,7 @@ pub fn install<T: std::io::Write>(
     let mut installed_deps = vec![];
     let mut lock_file = LockFile {
         root_deps: deps.clone(),
-        root_options: options.to_vec(),
+        root_options: options.clone(),
         locks: vec![],
     };
     install_h(
@@ -143,8 +146,6 @@ pub fn install<T: std::io::Write>(
                 .collect()
         })
         .collect();
-    installed_deps.sort_unstable();
-    installed_deps.dedup();
     lock_file.locks = installed_deps;
     fs::write(
         cfg_dir.join(LOCK_FILE_NAME),
@@ -153,8 +154,9 @@ pub fn install<T: std::io::Write>(
         })?,
     )?;
     fs::write(
-        cfg_dir.join("crack.build"),
-        serde_json::to_string(&sccs).context("Failed with crack.build file.")?,
+        cfg_dir.join(BUILD_FILE_NAME),
+        serde_json::to_string(&sccs)
+            .with_context(|| format!("Failed with {BUILD_FILE_NAME} file."))?,
     )?;
     Ok(())
 }
@@ -164,7 +166,7 @@ fn install_h<T: std::io::Write>(
     cfg_dir: OsString,
     deps_dir: &Path,
     deps: Vec<Dep>,
-    options: &[String],
+    options: &HashSet<String>,
     installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
     buffer: &mut T,
     prev_i: NodeIndex,
@@ -245,7 +247,7 @@ fn install_h<T: std::io::Write>(
                 dep_dir_name,
                 deps_dir,
                 dep_deps,
-                &options.unwrap_or(vec![]),
+                &options.unwrap_or(vec![]).into_iter().collect(),
                 installer,
                 buffer,
                 i,
@@ -259,6 +261,7 @@ fn install_h<T: std::io::Write>(
     Ok(())
 }
 
+/// All version tags of a repo.
 fn tags(repo: &str) -> Result<Vec<(Version, String)>> {
     Ok(std::str::from_utf8(
         &Command::new("git")
@@ -279,6 +282,7 @@ fn tags(repo: &str) -> Result<Vec<(Version, String)>> {
     .collect())
 }
 
+/// Install deps from remote repos.
 pub fn net_installer(
     cfg_path: &Path,
     deps_dir: &Path,
@@ -370,24 +374,17 @@ pub fn with_sterr(output: &std::process::Output) -> Result<()> {
     Ok(())
 }
 
-fn is_sorted<T: Ord + Clone>(array: &[T]) -> bool {
-    let mut cloned = array.to_vec();
-    cloned.sort();
-    cloned == array
-}
-
-/// Delete deps dirs, which aren't in ``LOCK_FILE_NAME`` file.
+/// Delete deps dirs, which aren't in the ``LOCK_FILE_NAME`` file.
 pub fn clean(locks: &[LockUnit], deps_dir: &Path, buffer: &mut impl std::io::Write) -> Result<()> {
-    debug_assert!(is_sorted(locks));
     let locked_dep_dirs = locks
         .iter()
         .map(dep_dir)
-        .collect::<Result<Vec<OsString>>>()?;
+        .collect::<Result<HashSet<OsString>>>()?;
     for file in fs::read_dir(deps_dir)? {
         let dir = file
             .with_context(|| format!("Failed with {deps_dir:#?} deps dir."))?
             .file_name();
-        if locked_dep_dirs.binary_search(&dir).is_err() {
+        if !locked_dep_dirs.contains(&dir) {
             fs::remove_dir_all(deps_dir.join(&dir))
                 .with_context(|| format!("Failed with {dir:#?} dir."))?;
             writeln!(buffer, "{dir:#?} was deleted")?;
@@ -427,7 +424,7 @@ fn repo_author_and_name(git_url: &str) -> Result<String> {
     )
 }
 
-/// Content of ``LOCK_FILE_NAME`` file.
+/// Content of the ``LOCK_FILE_NAME`` file.
 pub fn lock_file(lock_file_dir: &Path) -> Result<LockFile> {
     let lock_file = lock_file_dir.join(LOCK_FILE_NAME);
     Ok(if lock_file.exists() {
@@ -439,7 +436,7 @@ pub fn lock_file(lock_file_dir: &Path) -> Result<LockFile> {
     } else {
         LockFile {
             root_deps: vec![],
-            root_options: vec![],
+            root_options: HashSet::new(),
             locks: vec![],
         }
     })

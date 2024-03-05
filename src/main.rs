@@ -21,13 +21,13 @@ pub enum Subcommand {
     C,
     /// Create empty project
     N { project_name: std::ffi::OsString },
-    /// Build project
+    /// Build the project
     B,
-    /// Run project program
+    /// Run the project program
     R,
-    /// Add dep to crack.toml.
+    /// Add a dep to crack.toml.
     A { dep_name: String },
-    /// Add dev-dep to crack.toml.
+    /// Add a dev-dep to crack.toml.
     Ad { dev_dep_name: String },
 }
 
@@ -35,7 +35,7 @@ fn registry() -> Result<HashMap<String, String>> {
     Ok(toml::from_str(&fs::read_to_string(
         Path::new(&std::env::var("HOME")?)
             .join(".crack")
-            .join("names.toml"),
+            .join("registry.toml"),
     )?)?)
 }
 
@@ -57,7 +57,7 @@ fn add(dep_name: &str, dev_deps: bool) -> Result<()> {
         .append(true)
         .open(project_root()?.join(crack::CFG_FILE_NAME))?
         .write_all(
-            (format!("\n[[{}deps]]\n", if dev_deps {"dev_"} else {""}) // TODO: hardcode [[deps]]
+            (format!("\n[[{}deps]]\n", if dev_deps {"dev_"} else {""}) // hardcode [[deps]]
                 + &toml::to_string(&crack::Dep {
                     name: None,
                     repo: registry()?
@@ -78,10 +78,10 @@ fn main() -> Result<()> {
         Subcommand::I { options } => {
             let project_root = project_root()?;
             let deps_dir = project_root.join("deps");
-            crack::install_cfg(
+            crack::cfg_install(
                 &project_root,
                 &deps_dir,
-                &options.unwrap_or(vec![]),
+                &options.unwrap_or(vec![]).into_iter().collect(),
                 &crack::net_installer,
                 &mut std::io::stdout(),
             )?;
@@ -143,7 +143,7 @@ fn main() -> Result<()> {
                 fs::create_dir(&registry_dir)?;
             }
             fs::write(
-                registry_dir.join("names.toml"),
+                registry_dir.join("registry.toml"),
                 reqwest::blocking::get(
                     "https://gist.githubusercontent.com/WinstonMDP/2a7e34b7c9a514d20d13a41773b3defc/raw/d9b529ca18d2be2a00270dc3f1c141e7ecbf82c2/registry.toml"
                 )?
