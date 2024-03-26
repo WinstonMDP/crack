@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use std::{collections::HashMap, fs, io::Write, path::Path};
+use crack::with_sterr;
+use std::{collections::HashMap, fs, io::Write, path::Path, process::Command};
 
 #[derive(clap::Parser)]
 #[command(about = "A Sanskrit package manager", long_about = None)]
@@ -15,11 +16,11 @@ pub enum Subcommand {
     I { options: Option<Vec<String>> },
     /// Update deps, which are in crack.lock.
     U,
-    /// Update registry.
+    /// Update the registry.
     Ur,
     /// Delete directories, which aren't in crack.lock.
     C,
-    /// Create empty project
+    /// Create an empty project
     N { project_name: std::ffi::OsString },
     /// Build the project
     B,
@@ -94,7 +95,7 @@ fn main() -> Result<()> {
                 if let crack::LockType::Branch(..) = lock.lock_type {
                     let dir = deps_dir.join(crack::dep_dir(lock)?);
                     crack::with_sterr(
-                        &std::process::Command::new("git")
+                        &Command::new("git")
                             .current_dir(&dir)
                             .arg("pull")
                             .arg("-q")
@@ -133,8 +134,28 @@ fn main() -> Result<()> {
                 format!("name = {project_name:?}"),
             )?;
         }
-        Subcommand::B => todo!(),
-        Subcommand::R => todo!(),
+        Subcommand::B => {
+            todo!()
+        }
+        Subcommand::R => {
+            let output = &Command::new("sbt")
+                .current_dir(
+                    Path::new(&std::env::var("HOME")?)
+                        .join("other")
+                        .join("sanskrit-lang"),
+                )
+                .arg(format!(
+                    "run {}",
+                    project_root()?
+                        .canonicalize()?
+                        .join("main.sanskrit")
+                        .to_str()
+                        .unwrap()
+                ))
+                .output()?;
+            with_sterr(output)?;
+            println!("{}", std::str::from_utf8(&output.stdout)?);
+        }
         Subcommand::A { dep_name } => add(&dep_name, false)?,
         Subcommand::Ad { dev_dep_name } => add(&dev_dep_name, true)?,
         Subcommand::Ur => {

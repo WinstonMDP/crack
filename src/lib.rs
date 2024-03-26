@@ -1,4 +1,4 @@
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{ensure, Context, Result};
 use bimap::BiMap;
 use petgraph::{prelude::NodeIndex, Graph};
 use semver::Version;
@@ -263,7 +263,7 @@ fn install_h<T: std::io::Write>(
 
 /// Return a vec of (version, commit).
 fn version_tags(repo: &str) -> Result<Vec<(Version, String)>> {
-    Ok(std::str::from_utf8(
+    let mut v: Vec<(Version, String)> = std::str::from_utf8(
         &Command::new("git")
             .arg("ls-remote")
             .arg("--tags")
@@ -279,7 +279,9 @@ fn version_tags(repo: &str) -> Result<Vec<(Version, String)>> {
             captures.get(1)?.as_str().to_string(),
         ))
     })
-    .collect())
+    .collect();
+    v.sort_unstable_by(|x, y| x.0.cmp(&y.0));
+    Ok(v)
 }
 
 /// Install deps from remote repos.
@@ -415,12 +417,16 @@ pub fn dep_dir(lock: &LockUnit) -> Result<OsString> {
 fn repo_author_and_name(git_url: &str) -> Result<String> {
     let captures = regex::Regex::new(r"([\w-]*)\/([\w-]*)\.git")?
         .captures(git_url)
-        .ok_or_else(|| { anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.") })?;
-    Ok(captures.get(1).ok_or_else(|| { anyhow!("Can't capture author name in \"{git_url}\".") })? .as_str().to_string()
-        +
-        "."
-        +
-        captures.get(2).ok_or_else(|| { anyhow!("Can't capture repository name in \"{git_url}\". Probably, \".git\" part is missed.") })?.as_str()
+        .with_context(|| {
+            format!(
+                r#"Can't capture repository name in "{git_url}". Probably, ".git" part is missed."#
+            )
+        })?;
+    Ok(captures.get(1).with_context(|| format!(r#"Can't capture author name in "{git_url}"."#))?.as_str().to_string()
+       +
+       "."
+       +
+       captures.get(2).with_context(|| format!(r#"Can't capture repository name in "{git_url}". Probably, ".git" part is missed."#))?.as_str()
     )
 }
 
