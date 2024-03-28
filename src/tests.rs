@@ -149,7 +149,7 @@ fn stub_installer(
 
                         [[deps]]
                         repo = "https://github.com/WinstonMDP/githubOtherFiles.git"
-                        optional = "option"
+                        option_name = "option"
                         "#
                     }
                     _ => todo!(),

@@ -7,30 +7,37 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     ffi::OsString,
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::Command,
 };
 
 pub const CFG_FILE_NAME: &str = "crack.toml";
 const LOCK_FILE_NAME: &str = "crack.lock";
-const BUILD_FILE_NAME: &str = "crack.build";
+pub const BUILD_FILE_NAME: &str = "crack.build";
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Cfg {
     name: String,
+    #[serde(default = "default_translator")]
+    pub translator: PathBuf,
     #[serde(default)]
     dev_deps: Vec<Dep>,
     #[serde(default)]
     deps: Vec<Dep>,
 }
 
+fn default_translator() -> PathBuf {
+    PathBuf::from("/bin/sanskrit")
+}
+
 impl Cfg {
-    fn from(path: &Path) -> Result<Cfg> {
+    pub fn new(dir: &Path) -> Result<Cfg> {
+        let cfg_path = dir.join(CFG_FILE_NAME);
         toml::from_str(
-            &fs::read_to_string(path)
-                .with_context(|| format!("Failed with {path:#?} cfg file."))?,
+            &fs::read_to_string(&cfg_path)
+                .with_context(|| format!("Failed with {cfg_path:#?} cfg file."))?,
         )
-        .with_context(|| format!("Failed with {path:#?} cfg file."))
+        .with_context(|| format!("Failed with {cfg_path:#?} cfg file."))
     }
 }
 
@@ -41,7 +48,7 @@ pub struct Dep {
     #[serde(flatten)]
     pub dep_type: Option<DepType>,
     pub options: Option<Vec<String>>,
-    pub optional: Option<String>,
+    pub option_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -89,7 +96,7 @@ pub fn cfg_install<T: std::io::Write>(
     installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
     buffer: &mut T,
 ) -> Result<()> {
-    let cfg = Cfg::from(&cfg_dir.join(CFG_FILE_NAME))?;
+    let cfg = Cfg::new(cfg_dir)?;
     let mut deps = cfg.deps;
     deps.append(&mut cfg.dev_deps.clone());
     install(cfg_dir, deps_dir, deps, options, &installer, buffer)?;
@@ -178,7 +185,7 @@ fn install_h<T: std::io::Write>(
     let mut vec_for_name_map = Vec::with_capacity(deps.len());
     let mut vec_to_trans_deps_install = Vec::with_capacity(deps.len());
     for dep in deps {
-        if let Some(option_name) = dep.optional {
+        if let Some(option_name) = dep.option_name {
             if !options.contains(&option_name) {
                 continue;
             }
@@ -214,7 +221,7 @@ fn install_h<T: std::io::Write>(
             &lock,
             buffer,
         )?;
-        let dep_cfg = Cfg::from(&dep_dir_path.join(CFG_FILE_NAME))?;
+        let dep_cfg = Cfg::new(&dep_dir_path)?;
         vec_for_name_map.push((dep.name.unwrap_or(dep_cfg.name), dep_dir_name.clone()));
         vec_to_trans_deps_install.push((dep_cfg.deps, dep_dir_name, dep_dir_path, dep.options));
         locks.push(lock);
@@ -339,7 +346,7 @@ pub fn net_installer(
                     cfg_path,
                     lock,
                 )?;
-                writeln!(buffer, "{lock:?} was installed")?;
+                writeln!(buffer, "{lock:?} was installed.")?;
             }
             LockType::Branch(ref branch) => {
                 let mut command = Command::new("git");
@@ -353,7 +360,7 @@ pub fn net_installer(
                     command = command.arg("-b").arg(branch);
                 }
                 with_stderr_and_context(&command.arg(dep_dir_name).output()?, cfg_path, lock)?;
-                writeln!(buffer, "{lock:?} was installed")?;
+                writeln!(buffer, "{lock:?} was installed.")?;
             }
         }
     };
@@ -365,7 +372,7 @@ fn with_stderr_and_context(
     cfg: &Path,
     lock: &LockUnit,
 ) -> Result<()> {
-    with_sterr(output).with_context(|| format!("Failed with {cfg:?} cfg file, {lock:?}."))
+    with_sterr(output).with_context(|| format!("Failed with {lock:?} in {cfg:?} cfg file."))
 }
 
 pub fn with_sterr(output: &std::process::Output) -> Result<()> {
@@ -389,7 +396,7 @@ pub fn clean(locks: &[LockUnit], deps_dir: &Path, buffer: &mut impl std::io::Wri
         if !locked_dep_dirs.contains(&dir) {
             fs::remove_dir_all(deps_dir.join(&dir))
                 .with_context(|| format!("Failed with {dir:#?} dir."))?;
-            writeln!(buffer, "{dir:#?} was deleted")?;
+            writeln!(buffer, "{dir:#?} was deleted.")?;
         }
     }
     Ok(())

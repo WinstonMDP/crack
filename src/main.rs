@@ -1,7 +1,13 @@
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use crack::with_sterr;
-use std::{collections::HashMap, fs, io::Write, path::Path, process::Command};
+use std::{
+    collections::HashMap,
+    fs,
+    io::{stdout, Write},
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 #[derive(clap::Parser)]
 #[command(about = "A Sanskrit package manager", long_about = None)]
@@ -13,23 +19,34 @@ pub struct Cli {
 #[derive(clap::Subcommand)]
 pub enum Subcommand {
     /// Install crack.toml deps, which aren't in the deps directory, and produce crack.build.
-    I { options: Option<Vec<String>> },
+    #[clap(visible_alias = "i")]
+    Install { options: Option<Vec<String>> },
     /// Update deps, which are in crack.lock.
-    U,
+    #[clap(visible_alias = "u")]
+    Update,
     /// Update the registry.
-    Ur,
+    #[clap(visible_alias = "ur")]
+    UpdateRegistry,
     /// Delete directories, which aren't in crack.lock.
-    C,
+    #[clap(visible_alias = "c")]
+    Clean,
     /// Create an empty project
-    N { project_name: std::ffi::OsString },
+    #[clap(visible_alias = "n")]
+    New { project_name: std::ffi::OsString },
     /// Build the project
-    B,
+    #[clap(visible_alias = "b")]
+    Build { translator: Option<PathBuf> },
     /// Run the project program
-    R,
+    #[clap(visible_alias = "r")]
+    Run { translator: Option<PathBuf> },
     /// Add a dep to crack.toml.
-    A { dep_name: String },
+    #[clap(visible_alias = "a")]
+    Add { dep_name: String },
     /// Add a dev-dep to crack.toml.
-    Ad { dev_dep_name: String },
+    #[clap(visible_alias = "ad")]
+    AddDev { dev_dep_name: String },
+    /// Generate completion
+    Completion { shell: clap_complete::Shell },
 }
 
 fn registry() -> Result<HashMap<String, String>> {
@@ -40,7 +57,7 @@ fn registry() -> Result<HashMap<String, String>> {
     )?)?)
 }
 
-fn project_root() -> Result<std::path::PathBuf> {
+fn project_root() -> Result<PathBuf> {
     std::env::current_dir()?
         .ancestors()
         .find(|x| x.join(crack::CFG_FILE_NAME).exists())
@@ -66,17 +83,35 @@ fn add(dep_name: &str, dev_deps: bool) -> Result<()> {
                     .with_context(|| format!("There is no {dep_name} in the registry."))?,
                     dep_type: None,
                     options: None,
-                    optional: None
+                    option_name: None
                 })?)
                 .as_bytes(),
         )?;
     Ok(())
 }
 
+fn build_or_run(command: &str, translator: Option<PathBuf>) -> Result<()> {
+    let project_root = project_root()?;
+    let translator = translator.unwrap_or(crack::Cfg::new(&project_root)?.translator);
+    anyhow::ensure!(
+        translator.is_absolute(),
+        "Translator path must be absolute."
+    );
+    let output = &Command::new(translator)
+        .current_dir(&project_root)
+        .arg(command)
+        .arg(project_root.join(crack::BUILD_FILE_NAME).canonicalize()?)
+        .output()?;
+    with_sterr(output)?;
+    println!("{}", std::str::from_utf8(&output.stdout)?);
+    Ok(())
+}
+
+#[allow(clippy::too_many_lines)]
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.subcommand {
-        Subcommand::I { options } => {
+        Subcommand::Install { options } => {
             let project_root = project_root()?;
             let deps_dir = project_root.join("deps");
             crack::cfg_install(
@@ -84,10 +119,10 @@ fn main() -> Result<()> {
                 &deps_dir,
                 &options.unwrap_or(vec![]).into_iter().collect(),
                 &crack::net_installer,
-                &mut std::io::stdout(),
+                &mut stdout(),
             )?;
         }
-        Subcommand::U => {
+        Subcommand::Update => {
             let project_root = project_root()?;
             let deps_dir = project_root.join("deps");
             let lock_file = crack::lock_file(&project_root)?;
@@ -103,7 +138,7 @@ fn main() -> Result<()> {
                             .output()?,
                     )
                     .with_context(|| format!("Failed with {dir:#?} directory."))?;
-                    println!("{lock:?} was processed");
+                    println!("{lock:?} was processed.");
                 }
             }
             crack::install(
@@ -112,10 +147,10 @@ fn main() -> Result<()> {
                 lock_file.root_deps,
                 &lock_file.root_options,
                 &crack::net_installer,
-                &mut std::io::stdout(),
+                &mut stdout(),
             )?;
         }
-        Subcommand::C => {
+        Subcommand::Clean => {
             let project_root = project_root()?;
             let deps_dir = project_root.join("deps");
             if deps_dir.exists() {
@@ -126,7 +161,7 @@ fn main() -> Result<()> {
                 println!("There is nothing to clean. {deps_dir:#?} directory doesn't exist.");
             }
         }
-        Subcommand::N { project_name } => {
+        Subcommand::New { project_name } => {
             let project_dir = std::env::current_dir()?.join(&project_name);
             fs::create_dir(&project_dir)?;
             fs::write(
@@ -134,31 +169,11 @@ fn main() -> Result<()> {
                 format!("name = {project_name:?}"),
             )?;
         }
-        Subcommand::B => {
-            todo!()
-        }
-        Subcommand::R => {
-            let output = &Command::new("sbt")
-                .current_dir(
-                    Path::new(&std::env::var("HOME")?)
-                        .join("other")
-                        .join("sanskrit-lang"),
-                )
-                .arg(format!(
-                    "run {}",
-                    project_root()?
-                        .canonicalize()?
-                        .join("main.sanskrit")
-                        .to_str()
-                        .unwrap()
-                ))
-                .output()?;
-            with_sterr(output)?;
-            println!("{}", std::str::from_utf8(&output.stdout)?);
-        }
-        Subcommand::A { dep_name } => add(&dep_name, false)?,
-        Subcommand::Ad { dev_dep_name } => add(&dev_dep_name, true)?,
-        Subcommand::Ur => {
+        Subcommand::Build { translator, .. } => build_or_run("build", translator)?,
+        Subcommand::Run { translator } => build_or_run("run", translator)?,
+        Subcommand::Add { dep_name } => add(&dep_name, false)?,
+        Subcommand::AddDev { dev_dep_name } => add(&dev_dep_name, true)?,
+        Subcommand::UpdateRegistry => {
             let registry_dir = Path::new(&std::env::var("HOME")?).join(".crack");
             if !registry_dir.exists() {
                 fs::create_dir(&registry_dir)?;
@@ -170,6 +185,9 @@ fn main() -> Result<()> {
                 )?
                 .text()?,
             )?;
+        }
+        Subcommand::Completion { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "crack", &mut stdout());
         }
     };
     Ok(())
