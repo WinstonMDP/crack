@@ -7,8 +7,8 @@ Specify dep in ``crack.toml``. ``crack.toml`` must be in the project root.
 ```toml
 name = "package_name"
 
-translator = "translator absolute path"
-# a default translator path is /bin/sanskrit
+interpreter = "interpreter absolute path"
+# a default interpreter path is /bin/sanskrit
 
 [[deps]]
 repo = "git_repo_url"

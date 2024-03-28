@@ -35,10 +35,20 @@ pub enum Subcommand {
     New { project_name: std::ffi::OsString },
     /// Build the project
     #[clap(visible_alias = "b")]
-    Build { translator: Option<PathBuf> },
+    Build {
+        #[clap(short, long)]
+        interpreter: Option<PathBuf>,
+        #[clap(short, long)]
+        build_file: Option<PathBuf>,
+    },
     /// Run the project program
     #[clap(visible_alias = "r")]
-    Run { translator: Option<PathBuf> },
+    Run {
+        #[clap(short, long)]
+        interpreter: Option<PathBuf>,
+        #[clap(short, long)]
+        build_file: Option<PathBuf>,
+    },
     /// Add a dep to crack.toml.
     #[clap(visible_alias = "a")]
     Add { dep_name: String },
@@ -90,19 +100,31 @@ fn add(dep_name: &str, dev_deps: bool) -> Result<()> {
     Ok(())
 }
 
-fn build_or_run(command: &str, translator: Option<PathBuf>) -> Result<()> {
+enum BuildOrRun {
+    Build,
+    Run,
+}
+
+fn build_or_run(
+    build_or_run: &BuildOrRun,
+    interpreter: Option<PathBuf>,
+    build_file: Option<PathBuf>,
+) -> Result<()> {
     let project_root = project_root()?;
-    let translator = translator.unwrap_or(crack::Cfg::new(&project_root)?.translator);
+    let interpreter = interpreter.unwrap_or(crack::Cfg::new(&project_root)?.interpreter);
     anyhow::ensure!(
-        translator.is_absolute(),
-        "Translator path must be absolute."
+        interpreter.is_absolute(),
+        "The interpreter path must be absolute."
     );
-    let output = &Command::new(translator)
-        .current_dir(&project_root)
-        .arg(command)
-        .arg(project_root.join(crack::BUILD_FILE_NAME).canonicalize()?)
+    let mut command = Command::new(interpreter);
+    command.current_dir(&project_root);
+    if let BuildOrRun::Build = build_or_run {
+        command.arg("--check");
+    }
+    let output = command
+        .arg(build_file.unwrap_or(project_root.join(crack::BUILD_FILE_NAME).canonicalize()?))
         .output()?;
-    with_sterr(output)?;
+    with_sterr(&output)?;
     println!("{}", std::str::from_utf8(&output.stdout)?);
     Ok(())
 }
@@ -169,8 +191,14 @@ fn main() -> Result<()> {
                 format!("name = {project_name:?}"),
             )?;
         }
-        Subcommand::Build { translator, .. } => build_or_run("build", translator)?,
-        Subcommand::Run { translator } => build_or_run("run", translator)?,
+        Subcommand::Build {
+            interpreter,
+            build_file,
+        } => build_or_run(&BuildOrRun::Build, interpreter, build_file)?,
+        Subcommand::Run {
+            interpreter,
+            build_file,
+        } => build_or_run(&BuildOrRun::Run, interpreter, build_file)?,
         Subcommand::Add { dep_name } => add(&dep_name, false)?,
         Subcommand::AddDev { dev_dep_name } => add(&dev_dep_name, true)?,
         Subcommand::UpdateRegistry => {

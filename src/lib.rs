@@ -18,15 +18,15 @@ pub const BUILD_FILE_NAME: &str = "crack.build";
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Cfg {
     name: String,
-    #[serde(default = "default_translator")]
-    pub translator: PathBuf,
+    #[serde(default = "default_interpreter")]
+    pub interpreter: PathBuf,
     #[serde(default)]
     dev_deps: Vec<Dep>,
     #[serde(default)]
     deps: Vec<Dep>,
 }
 
-fn default_translator() -> PathBuf {
+fn default_interpreter() -> PathBuf {
     PathBuf::from("/bin/sanskrit")
 }
 
@@ -350,14 +350,14 @@ pub fn net_installer(
             }
             LockType::Branch(ref branch) => {
                 let mut command = Command::new("git");
-                let mut command = command
+                let command = command
                     .current_dir(deps_dir)
                     .arg("clone")
                     .arg("-q")
                     .arg("--depth=1")
                     .arg(&lock.repo);
                 if branch != "default" {
-                    command = command.arg("-b").arg(branch);
+                    command.arg("-b").arg(branch);
                 }
                 with_stderr_and_context(&command.arg(dep_dir_name).output()?, cfg_path, lock)?;
                 writeln!(buffer, "{lock:?} was installed.")?;
