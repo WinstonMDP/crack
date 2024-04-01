@@ -81,12 +81,7 @@ fn version_tags_t_1() {
     );
 }
 
-fn stub_installer(
-    _deps_dir: &Path,
-    dep_dir_path: &Path,
-    lock: &LockUnit,
-    _buffer: &mut impl std::io::Write,
-) -> Result<()> {
+fn stub_installer(_deps_dir: &Path, dep_dir_path: &Path, lock: &LockUnit) -> Result<()> {
     if !Path::new(dep_dir_path).exists() {
         std::fs::create_dir(dep_dir_path)?;
         fs::write(
@@ -199,14 +194,7 @@ fn install_t_1() {
     )
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
@@ -234,14 +222,7 @@ fn install_t_1() {
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.default")
     ));
     assert_eq!(nfiles(&deps_dir), 1);
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
@@ -287,14 +268,7 @@ fn install_t_2() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
@@ -343,14 +317,7 @@ fn install_t_3() {
     )
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[
@@ -416,14 +383,7 @@ fn install_t_4() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[
@@ -478,14 +438,7 @@ fn install_t_4() {
         "#,
     )
     .unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[
@@ -547,14 +500,7 @@ fn install_t_5() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[{
@@ -607,14 +553,7 @@ fn install_t_6() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[
@@ -679,14 +618,7 @@ fn install_t_7() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
@@ -728,14 +660,7 @@ fn install_t_7() {
         "#,
     )
     .unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
@@ -784,14 +709,7 @@ fn install_t_8() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
@@ -830,14 +748,7 @@ fn install_t_8() {
         "#,
     )
     .unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[
@@ -900,14 +811,7 @@ fn install_t_9() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[
@@ -978,14 +882,7 @@ fn install_t_10() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap_err();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap_err();
 }
 
 #[test]
@@ -1004,14 +901,7 @@ fn install_t_11() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[{
@@ -1063,14 +953,7 @@ fn install_t_12() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap_err();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap_err();
 }
 
 #[test]
@@ -1089,14 +972,7 @@ fn install_t_13() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[
@@ -1158,14 +1034,7 @@ fn install_t_14() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
@@ -1215,14 +1084,7 @@ fn install_t_15() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &[
@@ -1284,14 +1146,7 @@ fn clean_t_1() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     fs::write(
         cfg,
         r#"
@@ -1299,14 +1154,7 @@ fn clean_t_1() {
             "#,
     )
     .unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     clean(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &deps_dir,
@@ -1340,14 +1188,7 @@ fn clean_t_2() {
     .unwrap();
     let deps_dir = tmp_dir.path().join("deps");
     fs::create_dir(&deps_dir).unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert!(Path::exists(
         &deps_dir.join("WinstonMDP.githubOtherFiles.branch.default")
     ));
@@ -1361,14 +1202,7 @@ fn clean_t_2() {
             "#,
     )
     .unwrap();
-    cfg_install(
-        tmp_dir.path(),
-        &deps_dir,
-        &HashSet::new(),
-        &stub_installer,
-        &mut empty(),
-    )
-    .unwrap();
+    cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     clean(
         &lock_file(tmp_dir.path()).unwrap().locks,
         &deps_dir,

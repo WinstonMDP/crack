@@ -112,9 +112,10 @@ fn build_or_run(
     build_file: Option<PathBuf>,
 ) -> Result<()> {
     let project_root = project_root()?;
-    let interpreter = interpreter
-        .ok_or(())
-        .or_else(|()| -> Result<PathBuf> { Ok(crack::Cfg::new(&project_root)?.interpreter) })?;
+    let interpreter = interpreter.map_or_else(
+        || -> Result<PathBuf> { Ok(crack::Cfg::new(&project_root)?.interpreter) },
+        Ok,
+    )?;
     anyhow::ensure!(
         interpreter.is_absolute(),
         "The interpreter path must be absolute."
@@ -142,8 +143,7 @@ fn main() -> Result<()> {
                 &project_root,
                 &deps_dir,
                 &options.unwrap_or(vec![]).into_iter().collect(),
-                &crack::net_installer,
-                &mut stdout(),
+                &|a, b, c| crack::net_installer(a, b, c, &mut std::io::stdout()),
             )?;
         }
         Subcommand::Update => {
@@ -171,8 +171,7 @@ fn main() -> Result<()> {
                 &deps_dir,
                 lock_file.root_deps,
                 &lock_file.root_options,
-                &crack::net_installer,
-                &mut stdout(),
+                &|a, b, c| crack::net_installer(a, b, c, &mut std::io::stdout()),
             )?;
         }
         Subcommand::Clean => {

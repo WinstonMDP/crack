@@ -89,17 +89,16 @@ pub struct BuildUnit {
 }
 
 /// ``install``, but deps are from the cfg file.
-pub fn cfg_install<T: std::io::Write>(
+pub fn cfg_install(
     cfg_dir: &Path,
     deps_dir: &Path,
     options: &HashSet<String>,
-    installer: &impl Fn(&Path, &Path, &LockUnit, &mut T) -> Result<()>,
-    buffer: &mut T,
+    installer: &impl Fn(&Path, &Path, &LockUnit) -> Result<()>,
 ) -> Result<()> {
     let mut cfg = Cfg::new(cfg_dir)?;
     let mut deps = cfg.deps;
     deps.append(&mut cfg.dev_deps);
-    install(cfg_dir, deps_dir, deps, options, &installer, buffer)?;
+    install(cfg_dir, deps_dir, deps, options, &installer)?;
     Ok(())
 }
 
@@ -111,13 +110,12 @@ pub fn cfg_install<T: std::io::Write>(
 /// Write all deps, which must be contained in ``deps_dir``
 /// according to ``deps`` and its transitive deps, to the ``LOCK_FILE_NAME`` file and
 /// sccs of deps and root project in reverse topological order to the ``BUILD_FILE_NAME`` file.
-pub fn install<T: std::io::Write>(
+pub fn install(
     cfg_dir: &Path,
     deps_dir: &Path,
     deps: Vec<Dep>,
     options: &HashSet<String>,
-    installer: &impl Fn(&Path, &Path, &LockUnit, &mut T) -> Result<()>,
-    buffer: &mut T,
+    installer: &impl Fn(&Path, &Path, &LockUnit) -> Result<()>,
 ) -> Result<()> {
     if !deps_dir.exists() {
         fs::create_dir_all(deps_dir)?;
@@ -136,7 +134,6 @@ pub fn install<T: std::io::Write>(
         deps,
         options,
         &installer,
-        buffer,
         NodeIndex::from(0),
         &mut i_bimap,
         &mut graph,
@@ -167,13 +164,12 @@ pub fn install<T: std::io::Write>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn install_h<T: std::io::Write>(
+fn install_h(
     cfg_dir_name: OsString,
     deps_dir: &Path,
     deps: Vec<Dep>,
     options: &HashSet<String>,
-    installer: &impl Fn(&Path, &Path, &LockUnit, &mut T) -> Result<()>,
-    buffer: &mut T,
+    installer: &impl Fn(&Path, &Path, &LockUnit) -> Result<()>,
     prev_i: NodeIndex,
     i_bimap: &mut BiMap<BuildUnit, NodeIndex>,
     graph: &mut Graph<(), ()>,
@@ -211,7 +207,7 @@ fn install_h<T: std::io::Write>(
         };
         let dep_dir_name = dep_dir(&lock)?;
         let dep_dir_path = deps_dir.join(&dep_dir_name);
-        installer(deps_dir, &dep_dir_path, &lock, buffer)
+        installer(deps_dir, &dep_dir_path, &lock)
             .with_context(|| format!("Failed with {lock:?} in {cfg_dir_name:?} cfg."))?;
         let dep_cfg = Cfg::new(&dep_dir_path)?;
         vec_for_name_map.push((dep.name.unwrap_or(dep_cfg.name), dep_dir_name.clone()));
@@ -247,7 +243,6 @@ fn install_h<T: std::io::Write>(
                 dep_deps,
                 &options.unwrap_or(vec![]).into_iter().collect(),
                 installer,
-                buffer,
                 i,
                 i_bimap,
                 graph,
