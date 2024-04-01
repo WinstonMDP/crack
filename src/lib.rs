@@ -212,7 +212,7 @@ fn install_h<T: std::io::Write>(
         let dep_dir_name = dep_dir(&lock)?;
         let dep_dir_path = deps_dir.join(&dep_dir_name);
         installer(deps_dir, &dep_dir_path, &lock, buffer)
-            .with_context(|| format!("Failed with {cfg_dir_name:?} cfg."))?;
+            .with_context(|| format!("Failed with {lock:?} in {cfg_dir_name:?} cfg."))?;
         let dep_cfg = Cfg::new(&dep_dir_path)?;
         vec_for_name_map.push((dep.name.unwrap_or(dep_cfg.name), dep_dir_name.clone()));
         vec_to_trans_deps_install.push((dep_cfg.deps, dep_dir_name, dep.options));
@@ -293,15 +293,14 @@ pub fn net_installer(
         match lock.lock_type {
             LockType::Commit(ref commit) => {
                 std::fs::create_dir(dep_dir_path)?;
-                with_stderr_and_context(
+                with_stderr(
                     &Command::new("git")
                         .current_dir(dep_dir_path)
                         .arg("init")
                         .arg("-q")
                         .output()?,
-                    lock,
                 )?;
-                with_stderr_and_context(
+                with_stderr(
                     &Command::new("git")
                         .current_dir(dep_dir_path)
                         .arg("remote")
@@ -309,9 +308,8 @@ pub fn net_installer(
                         .arg("origin")
                         .arg(&lock.repo)
                         .output()?,
-                    lock,
                 )?;
-                with_stderr_and_context(
+                with_stderr(
                     &Command::new("git")
                         .current_dir(dep_dir_path)
                         .arg("fetch")
@@ -320,16 +318,14 @@ pub fn net_installer(
                         .arg("origin")
                         .arg(commit)
                         .output()?,
-                    lock,
                 )?;
-                with_stderr_and_context(
+                with_stderr(
                     &Command::new("git")
                         .current_dir(dep_dir_path)
                         .arg("checkout")
                         .arg("-q")
                         .arg("FETCH_HEAD")
                         .output()?,
-                    lock,
                 )?;
                 writeln!(buffer, "{lock:?} was installed.")?;
             }
@@ -344,7 +340,7 @@ pub fn net_installer(
                 if branch != "default" {
                     command.arg("-b").arg(branch);
                 }
-                with_stderr_and_context(&command.arg(dep_dir_path).output()?, lock)?;
+                with_stderr(&command.arg(dep_dir_path).output()?)?;
                 writeln!(buffer, "{lock:?} was installed.")?;
             }
         }
@@ -352,11 +348,7 @@ pub fn net_installer(
     Ok(())
 }
 
-fn with_stderr_and_context(output: &std::process::Output, lock: &LockUnit) -> Result<()> {
-    with_sterr(output).with_context(|| format!("Failed with {lock:?}."))
-}
-
-pub fn with_sterr(output: &std::process::Output) -> Result<()> {
+pub fn with_stderr(output: &std::process::Output) -> Result<()> {
     ensure!(
         output.stderr.is_empty(),
         std::str::from_utf8(&output.stderr)?.to_string()

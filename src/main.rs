@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
-use crack::with_sterr;
+use crack::with_stderr;
 use std::{
     collections::HashMap,
     fs,
@@ -127,7 +127,7 @@ fn build_or_run(
     let output = command
         .arg(build_file.unwrap_or_else(|| project_root.join(crack::BUILD_FILE_NAME)))
         .output()?;
-    with_sterr(&output)?;
+    with_stderr(&output)?;
     println!("{}", std::str::from_utf8(&output.stdout)?);
     Ok(())
 }
@@ -153,13 +153,14 @@ fn main() -> Result<()> {
             for lock in &lock_file.locks {
                 if let crack::LockType::Branch(..) = lock.lock_type {
                     let dir = deps_dir.join(crack::dep_dir(lock)?);
-                    crack::with_sterr(
+                    crack::with_stderr(
                         &Command::new("git")
                             .current_dir(&dir)
                             .arg("pull")
                             .arg("-q")
                             .arg("--depth=1")
-                            .output()?,
+                            .output()
+                            .with_context(|| format!("Failed with {lock:?}."))?,
                     )
                     .with_context(|| format!("Failed with {dir:#?} directory."))?;
                     println!("{lock:?} was processed.");
