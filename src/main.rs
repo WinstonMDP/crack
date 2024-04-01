@@ -143,7 +143,11 @@ fn main() -> Result<()> {
                 &project_root,
                 &deps_dir,
                 &options.unwrap_or(vec![]).into_iter().collect(),
-                &|a, b, c| crack::net_installer(a, b, c, &mut std::io::stdout()),
+                &|deps_dir, dep_dir_path, lock| {
+                    crack::net_installer(deps_dir, dep_dir_path, lock)?;
+                    println!("{lock:?} was installed.");
+                    Ok(())
+                },
             )?;
         }
         Subcommand::Update => {
@@ -171,7 +175,11 @@ fn main() -> Result<()> {
                 &deps_dir,
                 lock_file.root_deps,
                 &lock_file.root_options,
-                &|a, b, c| crack::net_installer(a, b, c, &mut stdout()),
+                &|deps_dir, dep_dir_path, lock| {
+                    crack::net_installer(deps_dir, dep_dir_path, lock)?;
+                    println!("{lock:?} was installed.");
+                    Ok(())
+                },
             )?;
         }
         Subcommand::Clean => {

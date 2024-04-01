@@ -278,12 +278,7 @@ fn version_tags(repo: &str) -> Result<Vec<(Version, String)>> {
 }
 
 /// Install deps from remote repos.
-pub fn net_installer(
-    deps_dir: &Path,
-    dep_dir_path: &Path,
-    lock: &LockUnit,
-    buffer: &mut impl std::io::Write,
-) -> Result<()> {
+pub fn net_installer(deps_dir: &Path, dep_dir_path: &Path, lock: &LockUnit) -> Result<()> {
     if !Path::new(dep_dir_path).exists() {
         match lock.lock_type {
             LockType::Commit(ref commit) => {
@@ -322,7 +317,6 @@ pub fn net_installer(
                         .arg("FETCH_HEAD")
                         .output()?,
                 )?;
-                writeln!(buffer, "{lock:?} was installed.")?;
             }
             LockType::Branch(ref branch) => {
                 let mut command = Command::new("git");
@@ -336,7 +330,6 @@ pub fn net_installer(
                     command.arg("-b").arg(branch);
                 }
                 with_stderr(&command.arg(dep_dir_path).output()?)?;
-                writeln!(buffer, "{lock:?} was installed.")?;
             }
         }
     };

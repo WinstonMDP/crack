@@ -30,7 +30,6 @@ fn net_installer_t_1() {
             repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
             lock_type: LockType::Branch("b".to_string()),
         },
-        &mut empty(),
     )
     .unwrap();
     assert!(Path::exists(&deps_dir.join("hey_dir")));
@@ -51,7 +50,6 @@ fn net_installer_t_2() {
             repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
             lock_type: LockType::Commit("909896f5646b7fd9f058dcd21961b8d5599dec3b".to_string()),
         },
-        &mut empty(),
     )
     .unwrap();
     assert!(Path::exists(&deps_dir.join("hey_dir")));
