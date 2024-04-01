@@ -24,10 +24,8 @@ fn net_installer_t_1() {
     let deps_dir = tmp_dir.path().join("deps");
     std::fs::create_dir(&deps_dir).unwrap();
     net_installer(
-        Path::new("not important"),
         &deps_dir,
         &deps_dir.join("hey_dir"),
-        &OsString::from("hey_dir"),
         &LockUnit {
             repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
             lock_type: LockType::Branch("b".to_string()),
@@ -47,10 +45,8 @@ fn net_installer_t_2() {
     let deps_dir = tmp_dir.path().join("deps");
     std::fs::create_dir(&deps_dir).unwrap();
     net_installer(
-        Path::new("not important"),
         &deps_dir,
         &deps_dir.join("hey_dir"),
-        &OsString::from("hey_dir"),
         &LockUnit {
             repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
             lock_type: LockType::Commit("909896f5646b7fd9f058dcd21961b8d5599dec3b".to_string()),
@@ -86,10 +82,8 @@ fn version_tags_t_1() {
 }
 
 fn stub_installer(
-    _cfg_path: &Path,
     _deps_dir: &Path,
     dep_dir_path: &Path,
-    _dep_dir_name: &OsString,
     lock: &LockUnit,
     _buffer: &mut impl std::io::Write,
 ) -> Result<()> {

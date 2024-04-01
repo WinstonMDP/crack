@@ -93,12 +93,12 @@ pub fn cfg_install<T: std::io::Write>(
     cfg_dir: &Path,
     deps_dir: &Path,
     options: &HashSet<String>,
-    installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
+    installer: &impl Fn(&Path, &Path, &LockUnit, &mut T) -> Result<()>,
     buffer: &mut T,
 ) -> Result<()> {
-    let cfg = Cfg::new(cfg_dir)?;
+    let mut cfg = Cfg::new(cfg_dir)?;
     let mut deps = cfg.deps;
-    deps.append(&mut cfg.dev_deps.clone());
+    deps.append(&mut cfg.dev_deps);
     install(cfg_dir, deps_dir, deps, options, &installer, buffer)?;
     Ok(())
 }
@@ -116,7 +116,7 @@ pub fn install<T: std::io::Write>(
     deps_dir: &Path,
     deps: Vec<Dep>,
     options: &HashSet<String>,
-    installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
+    installer: &impl Fn(&Path, &Path, &LockUnit, &mut T) -> Result<()>,
     buffer: &mut T,
 ) -> Result<()> {
     if !deps_dir.exists() {
@@ -124,7 +124,6 @@ pub fn install<T: std::io::Write>(
     }
     let mut graph = Graph::new();
     let mut i_bimap = BiMap::new();
-    let cfg_path = cfg_dir.join(CFG_FILE_NAME);
     let mut installed_deps = vec![];
     let mut lock_file = LockFile {
         root_deps: deps.clone(),
@@ -132,7 +131,6 @@ pub fn install<T: std::io::Write>(
         locks: vec![],
     };
     install_h(
-        &cfg_path,
         OsString::from("root"),
         deps_dir,
         deps,
@@ -168,13 +166,13 @@ pub fn install<T: std::io::Write>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn install_h<T: std::io::Write>(
-    cfg_path: &Path,
-    cfg_dir: OsString,
+    cfg_dir_name: OsString,
     deps_dir: &Path,
     deps: Vec<Dep>,
     options: &HashSet<String>,
-    installer: &impl Fn(&Path, &Path, &Path, &OsString, &LockUnit, &mut T) -> Result<()>,
+    installer: &impl Fn(&Path, &Path, &LockUnit, &mut T) -> Result<()>,
     buffer: &mut T,
     prev_i: NodeIndex,
     i_bimap: &mut BiMap<BuildUnit, NodeIndex>,
@@ -202,7 +200,7 @@ fn install_h<T: std::io::Write>(
                         .iter()
                         .rev()
                         .find(|x| version.matches(&x.0))
-                        .with_context(|| format!("There is no {version:?} in {}", dep.repo))?
+                        .with_context(|| format!("There is no {version:?} in {}.", dep.repo))?
                         .1
                         .clone(),
                 ),
@@ -213,29 +211,23 @@ fn install_h<T: std::io::Write>(
         };
         let dep_dir_name = dep_dir(&lock)?;
         let dep_dir_path = deps_dir.join(&dep_dir_name);
-        installer(
-            cfg_path,
-            deps_dir,
-            &dep_dir_path,
-            &dep_dir_name,
-            &lock,
-            buffer,
-        )?;
+        installer(deps_dir, &dep_dir_path, &lock, buffer)
+            .with_context(|| format!("Failed with {cfg_dir_name:?} cfg."))?;
         let dep_cfg = Cfg::new(&dep_dir_path)?;
         vec_for_name_map.push((dep.name.unwrap_or(dep_cfg.name), dep_dir_name.clone()));
-        vec_to_trans_deps_install.push((dep_cfg.deps, dep_dir_name, dep_dir_path, dep.options));
+        vec_to_trans_deps_install.push((dep_cfg.deps, dep_dir_name, dep.options));
         locks.push(lock);
     }
     let mut name_map = BTreeMap::new();
     for (dep_name, dep_dir) in vec_for_name_map {
         ensure!(
             !name_map.contains_key(&dep_name),
-            "Two equal names of deps exist in {cfg_path:?}."
+            "Two equal names of deps exist in {cfg_dir_name:?} cfg."
         );
         name_map.insert(dep_name, dep_dir);
     }
     let build_unit = BuildUnit {
-        dir: cfg_dir,
+        dir: cfg_dir_name,
         name_map,
     };
     let (i, contains_edge) = if i_bimap.contains_left(&build_unit) {
@@ -248,9 +240,8 @@ fn install_h<T: std::io::Write>(
     };
     if !contains_edge {
         graph.add_edge(prev_i, i, ());
-        for (dep_deps, dep_dir_name, dep_dir_path, options) in vec_to_trans_deps_install {
+        for (dep_deps, dep_dir_name, options) in vec_to_trans_deps_install {
             install_h(
-                &dep_dir_path,
                 dep_dir_name,
                 deps_dir,
                 dep_deps,
@@ -293,10 +284,8 @@ fn version_tags(repo: &str) -> Result<Vec<(Version, String)>> {
 
 /// Install deps from remote repos.
 pub fn net_installer(
-    cfg_path: &Path,
     deps_dir: &Path,
     dep_dir_path: &Path,
-    dep_dir_name: &OsString,
     lock: &LockUnit,
     buffer: &mut impl std::io::Write,
 ) -> Result<()> {
@@ -310,7 +299,6 @@ pub fn net_installer(
                         .arg("init")
                         .arg("-q")
                         .output()?,
-                    cfg_path,
                     lock,
                 )?;
                 with_stderr_and_context(
@@ -321,7 +309,6 @@ pub fn net_installer(
                         .arg("origin")
                         .arg(&lock.repo)
                         .output()?,
-                    cfg_path,
                     lock,
                 )?;
                 with_stderr_and_context(
@@ -333,7 +320,6 @@ pub fn net_installer(
                         .arg("origin")
                         .arg(commit)
                         .output()?,
-                    cfg_path,
                     lock,
                 )?;
                 with_stderr_and_context(
@@ -343,7 +329,6 @@ pub fn net_installer(
                         .arg("-q")
                         .arg("FETCH_HEAD")
                         .output()?,
-                    cfg_path,
                     lock,
                 )?;
                 writeln!(buffer, "{lock:?} was installed.")?;
@@ -359,7 +344,7 @@ pub fn net_installer(
                 if branch != "default" {
                     command.arg("-b").arg(branch);
                 }
-                with_stderr_and_context(&command.arg(dep_dir_name).output()?, cfg_path, lock)?;
+                with_stderr_and_context(&command.arg(dep_dir_path).output()?, lock)?;
                 writeln!(buffer, "{lock:?} was installed.")?;
             }
         }
@@ -367,12 +352,8 @@ pub fn net_installer(
     Ok(())
 }
 
-fn with_stderr_and_context(
-    output: &std::process::Output,
-    cfg: &Path,
-    lock: &LockUnit,
-) -> Result<()> {
-    with_sterr(output).with_context(|| format!("Failed with {lock:?} in {cfg:?} cfg file."))
+fn with_stderr_and_context(output: &std::process::Output, lock: &LockUnit) -> Result<()> {
+    with_sterr(output).with_context(|| format!("Failed with {lock:?}."))
 }
 
 pub fn with_sterr(output: &std::process::Output) -> Result<()> {

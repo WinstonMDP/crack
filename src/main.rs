@@ -80,20 +80,21 @@ fn project_root() -> Result<PathBuf> {
         })
 }
 
+// WARN: hardcoded "deps"
 fn add(dep_name: &str, dev_deps: bool) -> Result<()> {
     fs::OpenOptions::new()
         .append(true)
         .open(project_root()?.join(crack::CFG_FILE_NAME))?
         .write_all(
-            (format!("\n[[{}deps]]\n", if dev_deps {"dev_"} else {""}) // hardcode [[deps]]
+            (format!("\n[[{}deps]]\n", if dev_deps { "dev_" } else { "" })
                 + &toml::to_string(&crack::Dep {
                     name: None,
                     repo: registry()?
-                    .remove(dep_name)
-                    .with_context(|| format!("There is no {dep_name} in the registry."))?,
+                        .remove(dep_name)
+                        .with_context(|| format!("There is no {dep_name} in the registry."))?,
                     dep_type: None,
                     options: None,
-                    option_name: None
+                    option_name: None,
                 })?)
                 .as_bytes(),
         )?;
@@ -111,7 +112,9 @@ fn build_or_run(
     build_file: Option<PathBuf>,
 ) -> Result<()> {
     let project_root = project_root()?;
-    let interpreter = interpreter.unwrap_or(crack::Cfg::new(&project_root)?.interpreter);
+    let interpreter = interpreter
+        .ok_or(())
+        .or_else(|()| -> Result<PathBuf> { Ok(crack::Cfg::new(&project_root)?.interpreter) })?;
     anyhow::ensure!(
         interpreter.is_absolute(),
         "The interpreter path must be absolute."
@@ -122,14 +125,13 @@ fn build_or_run(
         command.arg("--check");
     }
     let output = command
-        .arg(build_file.unwrap_or(project_root.join(crack::BUILD_FILE_NAME).canonicalize()?))
+        .arg(build_file.unwrap_or_else(|| project_root.join(crack::BUILD_FILE_NAME)))
         .output()?;
     with_sterr(&output)?;
     println!("{}", std::str::from_utf8(&output.stdout)?);
     Ok(())
 }
 
-#[allow(clippy::too_many_lines)]
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.subcommand {
@@ -176,9 +178,12 @@ fn main() -> Result<()> {
             let project_root = project_root()?;
             let deps_dir = project_root.join("deps");
             if deps_dir.exists() {
-                let lock_file = crack::lock_file(&project_root)?;
                 fs::create_dir_all(&deps_dir)?;
-                crack::clean(&lock_file.locks, &deps_dir, &mut std::io::stdout())?;
+                crack::clean(
+                    &crack::lock_file(&project_root)?.locks,
+                    &deps_dir,
+                    &mut std::io::stdout(),
+                )?;
             } else {
                 println!("There is nothing to clean. {deps_dir:#?} directory doesn't exist.");
             }

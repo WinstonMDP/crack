@@ -7,7 +7,7 @@ Specify dep in ``crack.toml``. ``crack.toml`` must be in the project root.
 ```toml
 name = "package_name"
 
-interpreter = "interpreter absolute path"
+interpreter = "interpreter_absolute_path"
 # a default interpreter path is /bin/sanskrit
 
 [[deps]]
