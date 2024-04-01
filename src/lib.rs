@@ -59,7 +59,7 @@ pub enum DepType {
     Version(semver::VersionReq),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct LockFile {
     pub root_deps: Vec<Dep>,
     pub root_options: HashSet<String>,
@@ -390,19 +390,19 @@ pub fn dep_dir(lock: &LockUnit) -> Result<OsString> {
 }
 
 fn repo_author_and_name(git_url: &str) -> Result<String> {
+    let emsg1 = || {
+        format!(r#"Can't capture repository name in "{git_url}". Probably, ".git" part is missed."#)
+    };
     let captures = regex::Regex::new(r"([\w-]*)\/([\w-]*)\.git")?
         .captures(git_url)
-        .with_context(|| {
-            format!(
-                r#"Can't capture repository name in "{git_url}". Probably, ".git" part is missed."#
-            )
-        })?;
-    Ok(captures.get(1).with_context(|| format!(r#"Can't capture author name in "{git_url}"."#))?.as_str().to_string()
-       +
-       "."
-       +
-       captures.get(2).with_context(|| format!(r#"Can't capture repository name in "{git_url}". Probably, ".git" part is missed."#))?.as_str()
-    )
+        .with_context(emsg1)?;
+    let emsg2 = || format!(r#"Can't capture author name in "{git_url}"."#);
+    let emsg3 = || {
+        format!(r#"Can't capture repository name in "{git_url}". Probably, ".git" part is missed."#)
+    };
+    Ok(captures.get(1).with_context(emsg2)?.as_str().to_string()
+        + "."
+        + captures.get(2).with_context(emsg3)?.as_str())
 }
 
 /// Content of the ``LOCK_FILE_NAME`` file.
@@ -415,11 +415,7 @@ pub fn lock_file(lock_file_dir: &Path) -> Result<LockFile> {
         )
         .with_context(|| format!("Failed with {lock_file:#?} lock file."))?
     } else {
-        LockFile {
-            root_deps: vec![],
-            root_options: HashSet::new(),
-            locks: vec![],
-        }
+        LockFile::default()
     })
 }
 

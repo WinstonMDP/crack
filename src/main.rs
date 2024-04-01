@@ -171,7 +171,7 @@ fn main() -> Result<()> {
                 &deps_dir,
                 lock_file.root_deps,
                 &lock_file.root_options,
-                &|a, b, c| crack::net_installer(a, b, c, &mut std::io::stdout()),
+                &|a, b, c| crack::net_installer(a, b, c, &mut stdout()),
             )?;
         }
         Subcommand::Clean => {
@@ -182,7 +182,7 @@ fn main() -> Result<()> {
                 crack::clean(
                     &crack::lock_file(&project_root)?.locks,
                     &deps_dir,
-                    &mut std::io::stdout(),
+                    &mut stdout(),
                 )?;
             } else {
                 println!("There is nothing to clean. {deps_dir:#?} directory doesn't exist.");
