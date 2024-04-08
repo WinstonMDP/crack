@@ -31,7 +31,7 @@ fn default_interpreter() -> PathBuf {
 }
 
 impl Cfg {
-    pub fn new(dir: &Path) -> Result<Cfg> {
+    pub fn new(dir: &Path) -> Result<Self> {
         let cfg_path = dir.join(CFG_FILE_NAME);
         toml::from_str(
             &fs::read_to_string(&cfg_path)
@@ -65,6 +65,21 @@ pub struct LockFile {
     pub root_options: HashSet<String>,
     #[serde(default)]
     pub locks: Vec<LockUnit>,
+}
+
+impl LockFile {
+    pub fn new(lock_file_dir: &Path) -> Result<Self> {
+        let lock_file = lock_file_dir.join(LOCK_FILE_NAME);
+        Ok(if lock_file.exists() {
+            toml::from_str(
+                &fs::read_to_string(&lock_file)
+                    .with_context(|| format!("Failed with {lock_file:#?} lock file."))?,
+            )
+            .with_context(|| format!("Failed with {lock_file:#?} lock file."))?
+        } else {
+            LockFile::default()
+        })
+    }
 }
 
 #[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Serialize, Deserialize, Clone, Hash)]
@@ -130,6 +145,7 @@ pub fn install(
     };
     install_h(
         OsString::from("root"),
+        None,
         deps_dir,
         deps,
         options,
@@ -166,6 +182,7 @@ pub fn install(
 #[allow(clippy::too_many_arguments)]
 fn install_h(
     cfg_dir_name: OsString,
+    lock: Option<LockUnit>,
     deps_dir: &Path,
     deps: Vec<Dep>,
     options: &HashSet<String>,
@@ -184,7 +201,7 @@ fn install_h(
                 continue;
             }
         }
-        let lock = LockUnit {
+        let dep_lock = LockUnit {
             lock_type: match dep
                 .dep_type
                 .unwrap_or(DepType::Branch("default".to_string()))
@@ -205,20 +222,21 @@ fn install_h(
             },
             repo: dep.repo,
         };
-        let dep_dir_name = dep_dir(&lock)?;
+        let dep_dir_name = dep_dir(&dep_lock)?;
         let dep_dir_path = deps_dir.join(&dep_dir_name);
-        installer(deps_dir, &dep_dir_path, &lock)
-            .with_context(|| format!("Failed with {lock:?} in {cfg_dir_name:?} cfg."))?;
+        if !Path::new(&dep_dir_path).exists() {
+            installer(deps_dir, &dep_dir_path, &dep_lock)
+                .with_context(|| format!("Failed with {dep_lock:?} in {cfg_dir_name:?} cfg."))?;
+        }
         let dep_cfg = Cfg::new(&dep_dir_path)?;
         vec_for_name_map.push((dep.name.unwrap_or(dep_cfg.name), dep_dir_name.clone()));
-        vec_to_trans_deps_install.push((dep_cfg.deps, dep_dir_name, dep.options));
-        locks.push(lock);
+        vec_to_trans_deps_install.push((dep_cfg.deps, dep_dir_name, dep.options, dep_lock));
     }
     let mut name_map = BTreeMap::new();
     for (dep_name, dep_dir) in vec_for_name_map {
         ensure!(
             !name_map.contains_key(&dep_name),
-            "Two equal names of deps exist in {cfg_dir_name:?} cfg."
+            "Two equal names of deps ({dep_name:?}) exist in {cfg_dir_name:?} cfg."
         );
         name_map.insert(dep_name, dep_dir);
     }
@@ -232,13 +250,17 @@ fn install_h(
     } else {
         let i = graph.add_node(());
         i_bimap.insert(build_unit, i);
+        if let Some(lock) = lock {
+            locks.push(lock);
+        }
         (i, false)
     };
     if !contains_edge {
         graph.add_edge(prev_i, i, ());
-        for (dep_deps, dep_dir_name, options) in vec_to_trans_deps_install {
+        for (dep_deps, dep_dir_name, options, lock) in vec_to_trans_deps_install {
             install_h(
                 dep_dir_name,
+                Some(lock),
                 deps_dir,
                 dep_deps,
                 &options.unwrap_or(vec![]).into_iter().collect(),
@@ -279,58 +301,56 @@ fn version_tags(repo: &str) -> Result<Vec<(Version, String)>> {
 
 /// Install deps from remote repos.
 pub fn net_installer(deps_dir: &Path, dep_dir_path: &Path, lock: &LockUnit) -> Result<()> {
-    if !Path::new(dep_dir_path).exists() {
-        match lock.lock_type {
-            LockType::Commit(ref commit) => {
-                std::fs::create_dir(dep_dir_path)?;
-                with_stderr(
-                    &Command::new("git")
-                        .current_dir(dep_dir_path)
-                        .arg("init")
-                        .arg("-q")
-                        .output()?,
-                )?;
-                with_stderr(
-                    &Command::new("git")
-                        .current_dir(dep_dir_path)
-                        .arg("remote")
-                        .arg("add")
-                        .arg("origin")
-                        .arg(&lock.repo)
-                        .output()?,
-                )?;
-                with_stderr(
-                    &Command::new("git")
-                        .current_dir(dep_dir_path)
-                        .arg("fetch")
-                        .arg("-q")
-                        .arg("--depth=1")
-                        .arg("origin")
-                        .arg(commit)
-                        .output()?,
-                )?;
-                with_stderr(
-                    &Command::new("git")
-                        .current_dir(dep_dir_path)
-                        .arg("checkout")
-                        .arg("-q")
-                        .arg("FETCH_HEAD")
-                        .output()?,
-                )?;
-            }
-            LockType::Branch(ref branch) => {
-                let mut command = Command::new("git");
-                let command = command
-                    .current_dir(deps_dir)
-                    .arg("clone")
+    match lock.lock_type {
+        LockType::Commit(ref commit) => {
+            std::fs::create_dir(dep_dir_path)?;
+            with_stderr(
+                &Command::new("git")
+                    .current_dir(dep_dir_path)
+                    .arg("init")
+                    .arg("-q")
+                    .output()?,
+            )?;
+            with_stderr(
+                &Command::new("git")
+                    .current_dir(dep_dir_path)
+                    .arg("remote")
+                    .arg("add")
+                    .arg("origin")
+                    .arg(&lock.repo)
+                    .output()?,
+            )?;
+            with_stderr(
+                &Command::new("git")
+                    .current_dir(dep_dir_path)
+                    .arg("fetch")
                     .arg("-q")
                     .arg("--depth=1")
-                    .arg(&lock.repo);
-                if branch != "default" {
-                    command.arg("-b").arg(branch);
-                }
-                with_stderr(&command.arg(dep_dir_path).output()?)?;
+                    .arg("origin")
+                    .arg(commit)
+                    .output()?,
+            )?;
+            with_stderr(
+                &Command::new("git")
+                    .current_dir(dep_dir_path)
+                    .arg("checkout")
+                    .arg("-q")
+                    .arg("FETCH_HEAD")
+                    .output()?,
+            )?;
+        }
+        LockType::Branch(ref branch) => {
+            let mut command = Command::new("git");
+            let command = command
+                .current_dir(deps_dir)
+                .arg("clone")
+                .arg("-q")
+                .arg("--depth=1")
+                .arg(&lock.repo);
+            if branch != "default" {
+                command.arg("-b").arg(branch);
             }
+            with_stderr(&command.arg(dep_dir_path).output()?)?;
         }
     };
     Ok(())
@@ -396,20 +416,6 @@ fn repo_author_and_name(git_url: &str) -> Result<String> {
     Ok(captures.get(1).with_context(emsg2)?.as_str().to_string()
         + "."
         + captures.get(2).with_context(emsg3)?.as_str())
-}
-
-/// Content of the ``LOCK_FILE_NAME`` file.
-pub fn lock_file(lock_file_dir: &Path) -> Result<LockFile> {
-    let lock_file = lock_file_dir.join(LOCK_FILE_NAME);
-    Ok(if lock_file.exists() {
-        toml::from_str(
-            &fs::read_to_string(&lock_file)
-                .with_context(|| format!("Failed with {lock_file:#?} lock file."))?,
-        )
-        .with_context(|| format!("Failed with {lock_file:#?} lock file."))?
-    } else {
-        LockFile::default()
-    })
 }
 
 #[cfg(test)]

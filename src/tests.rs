@@ -160,14 +160,15 @@ fn stub_installer(_deps_dir: &Path, dep_dir_path: &Path, lock: &LockUnit) -> Res
     Ok(())
 }
 
-fn assert_unord_eq<T: std::cmp::Eq + std::hash::Hash + std::fmt::Debug + std::clone::Clone>(
+fn assert_unord_eq<T: std::cmp::Ord + std::hash::Hash + std::fmt::Debug + std::clone::Clone>(
     x: &[T],
     y: &[T],
 ) {
-    assert_eq!(
-        x.iter().cloned().collect::<HashSet<T>>(),
-        y.iter().cloned().collect::<HashSet<T>>()
-    );
+    let mut x = x.to_vec();
+    x.sort_unstable();
+    let mut y = y.to_vec();
+    y.sort_unstable();
+    assert_eq!(x, y);
 }
 
 fn nfiles(dir: &Path) -> usize {
@@ -194,7 +195,7 @@ fn install_t_1() {
     let deps_dir = tmp_dir.path().join("deps");
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
             repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
             lock_type: Branch("default".to_string()),
@@ -222,7 +223,7 @@ fn install_t_1() {
     assert_eq!(nfiles(&deps_dir), 1);
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
             repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
             lock_type: Branch("default".to_string()),
@@ -268,7 +269,7 @@ fn install_t_2() {
     fs::create_dir(&deps_dir).unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
             repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
             lock_type: Branch("main".to_string()),
@@ -317,7 +318,7 @@ fn install_t_3() {
     let deps_dir = tmp_dir.path().join("deps");
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[
             LockUnit {
                 repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -383,7 +384,7 @@ fn install_t_4() {
     fs::create_dir(&deps_dir).unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[
             LockUnit {
                 repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -438,7 +439,7 @@ fn install_t_4() {
     .unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[
             LockUnit {
                 repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -500,7 +501,7 @@ fn install_t_5() {
     fs::create_dir(&deps_dir).unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[{
             LockUnit {
                 repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -553,7 +554,7 @@ fn install_t_6() {
     fs::create_dir(&deps_dir).unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[
             LockUnit {
                 repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -618,7 +619,7 @@ fn install_t_7() {
     fs::create_dir(&deps_dir).unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
             repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
             lock_type: Branch("default".to_string()),
@@ -660,7 +661,7 @@ fn install_t_7() {
     .unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
             repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
             lock_type: Branch("b".to_string()),
@@ -709,7 +710,7 @@ fn install_t_8() {
     fs::create_dir(&deps_dir).unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
             repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
             lock_type: Branch("default".to_string()),
@@ -748,7 +749,7 @@ fn install_t_8() {
     .unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[
             LockUnit {
                 repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -811,7 +812,7 @@ fn install_t_9() {
     fs::create_dir(&deps_dir).unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[
             LockUnit {
                 repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -901,7 +902,7 @@ fn install_t_11() {
     fs::create_dir(&deps_dir).unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[{
             LockUnit {
                 repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -972,7 +973,7 @@ fn install_t_13() {
     fs::create_dir(&deps_dir).unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[
             LockUnit {
                 repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -1034,7 +1035,7 @@ fn install_t_14() {
     fs::create_dir(&deps_dir).unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[LockUnit {
             repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
             lock_type: Branch("optional_branch".to_string()),
@@ -1084,7 +1085,7 @@ fn install_t_15() {
     fs::create_dir(&deps_dir).unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     assert_unord_eq(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &[
             LockUnit {
                 repo: "https://github.com/WinstonMDP/githubOtherFiles.git".to_string(),
@@ -1154,7 +1155,7 @@ fn clean_t_1() {
     .unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     clean(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &deps_dir,
         &mut empty(),
     )
@@ -1202,7 +1203,7 @@ fn clean_t_2() {
     .unwrap();
     cfg_install(tmp_dir.path(), &deps_dir, &HashSet::new(), &stub_installer).unwrap();
     clean(
-        &lock_file(tmp_dir.path()).unwrap().locks,
+        &LockFile::new(tmp_dir.path()).unwrap().locks,
         &deps_dir,
         &mut empty(),
     )

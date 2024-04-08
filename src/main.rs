@@ -86,7 +86,7 @@ fn add(dep_name: &str, dev_deps: bool) -> Result<()> {
         .append(true)
         .open(project_root()?.join(crack::CFG_FILE_NAME))?
         .write_all(
-            (format!("\n[[{}deps]]\n", if dev_deps { "dev_" } else { "" })
+            (format!("\n\n[[{}deps]]\n", if dev_deps { "dev_" } else { "" })
                 + &toml::to_string(&crack::Dep {
                     name: None,
                     repo: registry()?
@@ -133,6 +133,7 @@ fn build_or_run(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.subcommand {
@@ -153,10 +154,20 @@ fn main() -> Result<()> {
         Subcommand::Update => {
             let project_root = project_root()?;
             let deps_dir = project_root.join("deps");
-            let lock_file = crack::lock_file(&project_root)?;
+            let lock_file = crack::LockFile::new(&project_root)?;
             for lock in &lock_file.locks {
                 if let crack::LockType::Branch(..) = lock.lock_type {
                     let dir = deps_dir.join(crack::dep_dir(lock)?);
+                    crack::with_stderr(
+                        &Command::new("git")
+                            .current_dir(&dir)
+                            .arg("pull")
+                            .arg("-q")
+                            .arg("--deepen=1")
+                            .output()
+                            .with_context(|| format!("Failed with {lock:?}."))?,
+                    )
+                    .with_context(|| format!("Failed with {dir:#?} directory."))?;
                     crack::with_stderr(
                         &Command::new("git")
                             .current_dir(&dir)
@@ -188,7 +199,7 @@ fn main() -> Result<()> {
             if deps_dir.exists() {
                 fs::create_dir_all(&deps_dir)?;
                 crack::clean(
-                    &crack::lock_file(&project_root)?.locks,
+                    &crack::LockFile::new(&project_root)?.locks,
                     &deps_dir,
                     &mut stdout(),
                 )?;
